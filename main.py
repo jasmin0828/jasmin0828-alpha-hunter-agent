@@ -11,6 +11,8 @@ import time
 
 import schedule
 
+from config import AUTO_TRADING_ENABLED
+from src.notifications.telegram_notifier import TelegramNotifier
 from src.services.alpha_token_service import AlphaTokenService
 from src.utils.logging_config import setup_logging
 
@@ -22,6 +24,7 @@ def run_agent() -> None:
     """Run one complete alpha-token scan and log all recoverable failures."""
     logger = logging.getLogger(__name__)
     service = AlphaTokenService()
+    notifier = TelegramNotifier()
 
     try:
         top_tokens = service.find_and_save_top_tokens()
@@ -37,6 +40,11 @@ def run_agent() -> None:
     logger.info("Top %s alpha tokens:\n%s", len(top_tokens), top_tokens.to_string(index=False))
     print(top_tokens.to_string(index=False))
 
+    try:
+        notifier.notify_top_tokens(top_tokens)
+    except Exception:
+        logger.exception("Telegram notification failed")
+
 
 def main() -> None:
     """Start the scheduled Alpha Hunter Agent loop."""
@@ -44,6 +52,7 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     logger.info("Starting Alpha Hunter Agent v0.1")
+    logger.info("Auto trading enabled: %s", AUTO_TRADING_ENABLED)
     run_agent()
 
     schedule.every(RUN_INTERVAL_MINUTES).minutes.do(run_agent)
