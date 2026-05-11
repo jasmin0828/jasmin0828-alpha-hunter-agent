@@ -113,7 +113,7 @@ class AlphaTokenService:
         return dataframe
 
     def _filter_tokens(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        """Apply Alpha Hunter v0.1 liquidity, volume, momentum, and FDV filters."""
+        """Apply Alpha Hunter v0.5 liquidity, volume, momentum, and FDV filters."""
         required_columns = ["liquidity_usd", "volume_24h", "price_change_24h", "fdv"]
         cleaned = dataframe.dropna(subset=required_columns).copy()
 

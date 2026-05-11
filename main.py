@@ -1,4 +1,4 @@
-"""Alpha Hunter Agent v0.1 entry point.
+"""Alpha Hunter Agent v0.5 entry point.
 
 The agent only reads public DexScreener data. It does not connect to wallets
 and it never executes trades.
@@ -51,7 +51,7 @@ def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting Alpha Hunter Agent v0.1")
+    logger.info("Starting Alpha Hunter Agent v0.5")
     logger.info("Auto trading enabled: %s", AUTO_TRADING_ENABLED)
     run_agent()
 

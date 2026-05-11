@@ -1,36 +1,29 @@
-# Alpha Hunter Agent v0.1
+# Alpha Hunter Agent v0.5
 
-Alpha Hunter Agent v0.1 is a Python 3.13 data scanner for Solana tokens on
-DexScreener. It reads public market data, filters potential candidates, prints
-the Top 10 tokens, and saves the result to CSV.
+Alpha Hunter Agent is an AI market-intelligence agent built for the OKX Agentic
+Wallet competition showcase. It watches Solana token activity from public
+DexScreener data, filters noisy markets, scores each candidate with an AI
+Intelligence Layer, and delivers a dashboard plus Telegram alerts for fast
+human review.
 
-This project does not connect to wallets and does not execute trades.
+The product focus is simple: help a user detect early market attention without
+asking the agent to custody funds, connect a wallet, or execute trades.
 
-## Features
+## Core Capabilities
 
-- Fetches Solana hot token candidates from DexScreener top boosts.
-- Loads pair metrics with liquidity, 24h volume, 24h price change, and FDV.
-- Filters tokens with the Alpha Hunter v0.1 rules.
-- Prints the Top 10 tokens ranked by 24h volume.
-- Saves results to `data/alpha_tokens.csv`.
-- Writes runtime logs to `logs/app.log`.
-- Sends Telegram messages when Top tokens are found.
-- Adds AI Intelligence Layer v0.4 scores and summaries for each token.
-- Runs once at startup and then every 10 minutes.
+- Solana hot-token discovery from DexScreener public APIs.
+- Market-quality filters for liquidity, 24h volume, 24h price change, and FDV.
+- Top 10 alpha candidate output to `data/alpha_tokens.csv`.
+- AI Intelligence Layer v0.4 with alpha score, risk score, and AI Summary.
+- Streamlit competition dashboard with score colors, risk colors, and summary cards.
+- Telegram Alert delivery when Top tokens are found.
+- Scheduled scanning every 10 minutes with file logging to `logs/app.log`.
+- No wallet connection and no transaction execution.
 
-## Filters
+## AI Intelligence Layer
 
-Tokens must match all of these rules:
-
-- `liquidity_usd > 50000`
-- `volume_24h > 100000`
-- `price_change_24h >= -30`
-- `price_change_24h <= 200`
-- `fdv < 50000000`
-
-## AI Intelligence Layer v0.4
-
-Each filtered token receives deterministic AI-style analysis based on:
+Each candidate token is analyzed using deterministic scoring rules across five
+market dimensions:
 
 - `liquidity_usd`
 - `volume_24h`
@@ -38,12 +31,12 @@ Each filtered token receives deterministic AI-style analysis based on:
 - `price_change_24h`
 - `pair_created_at`
 
-The output includes:
+The agent adds three AI fields to every token:
 
-- `alpha_score`: 0-100 score for alpha potential.
-- `risk_score`: 0-100 score where higher means higher risk.
-- `ai_summary`: short summary covering momentum, liquidity, FDV, rug risk,
-  suspicious volume, and speculative activity.
+- `alpha_score`: 0-100 signal for opportunity quality.
+- `risk_score`: 0-100 signal where higher means more risk.
+- `ai_summary`: product-readable explanation of momentum, liquidity, FDV, rug
+  risk, suspicious volume, and short-term speculation.
 
 Example AI Summary:
 
@@ -51,35 +44,107 @@ Example AI Summary:
 Strong momentum detected | Healthy liquidity | Moderate FDV | Rug risk: LOW | Short-term speculative activity possible
 ```
 
-## Project Structure
+## Dashboard Showcase
 
-```text
-alpha-hunter-ai/
-├── main.py
-├── config.py
-├── requirements.txt
-├── README.md
-├── dashboard/
-│   └── streamlit_app.py
-├── data/
-│   └── alpha_tokens.csv
-├── logs/
-│   └── app.log
-└── src/
-    ├── ai/
-    │   └── alpha_analyzer.py
-    ├── api/
-    │   └── dexscreener_client.py
-    ├── notifications/
-    │   └── telegram_notifier.py
-    ├── services/
-    │   └── alpha_token_service.py
-    └── utils/
-        ├── logging_config.py
-        └── paths.py
+The dashboard is designed as the primary competition demo surface:
+
+- Top token spotlight with alpha score, risk score, liquidity, volume, and 24h move.
+- KPI strip for token count, average alpha score, average risk score, and 24h volume.
+- Color-coded Alpha Score and Risk Score table.
+- AI Summary cards that translate raw metrics into a quick investment-research narrative.
+- Auto-refresh every 30 seconds while the scanner updates data in the background.
+
+Start it with:
+
+```bash
+streamlit run dashboard/streamlit_app.py
 ```
 
-## Setup
+## Telegram Alert Showcase
+
+When Top tokens are detected, the Telegram notifier sends a compact alert with:
+
+- symbol
+- token name
+- 24h volume
+- liquidity
+- 24h price change
+- FDV
+- alpha score
+- risk score
+- AI Summary
+- DexScreener URL
+
+This makes the agent useful outside the dashboard, while keeping all actions
+read-only and human-reviewed.
+
+## System Architecture
+
+```text
+                         +----------------------+
+                         |  DexScreener API     |
+                         |  Public market data  |
+                         +----------+-----------+
+                                    |
+                                    v
++------------------+     +----------+-----------+     +----------------------+
+| schedule loop    | --> | DexScreener client   | --> | Token filter service |
+| every 10 minutes |     | src/api/             |     | src/services/        |
++------------------+     +----------------------+     +----------+-----------+
+                                                               |
+                                                               v
+                                                    +----------+-----------+
+                                                    | AI Intelligence     |
+                                                    | src/ai/             |
+                                                    +----------+-----------+
+                                                               |
+                           +-----------------------------------+------------------+
+                           |                                   |                  |
+                           v                                   v                  v
+                 +---------+----------+              +---------+---------+  +-----+------+
+                 | data/alpha_tokens |              | Streamlit UI      |  | Telegram   |
+                 | CSV output        |              | dashboard/        |  | alerts     |
+                 +-------------------+              +-------------------+  +------------+
+```
+
+## Technical Stack
+
+- Python 3.13
+- requests
+- pandas
+- schedule
+- logging
+- python-dotenv
+- Streamlit
+- Telegram Bot API
+- DexScreener public API
+
+## Demo Flow
+
+1. Start the agent loop:
+
+```bash
+python main.py
+```
+
+2. Open the dashboard in a second terminal:
+
+```bash
+streamlit run dashboard/streamlit_app.py
+```
+
+3. Show the Top Token spotlight and explain that raw market data is transformed
+   into ranked, scored candidates.
+
+4. Open the AI Summary cards and explain how the agent flags strong momentum,
+   low liquidity, suspicious volume, rug risk, and speculative activity.
+
+5. Show the Telegram alert as the off-dashboard notification channel.
+
+Detailed demo notes are available in [docs/demo_script.md](docs/demo_script.md).
+Architecture notes are available in [docs/architecture.md](docs/architecture.md).
+
+## Installation
 
 ```bash
 python3.13 -m venv .venv
@@ -87,15 +152,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Telegram Configuration
+## Configuration
 
-Create a `.env` file in the project root:
+Create a `.env` file:
 
 ```bash
 cp .env.example .env
 ```
 
-Then set these values:
+Set Telegram configuration:
 
 ```env
 TELEGRAM_ENABLED=true
@@ -104,42 +169,41 @@ TELEGRAM_CHAT_ID=your_telegram_chat_id_here
 AUTO_TRADING_ENABLED=false
 ```
 
-`TELEGRAM_BOT_TOKEN` comes from BotFather. `TELEGRAM_CHAT_ID` is the target
-chat, group, or channel ID. When Top tokens are found, the agent sends a message
-containing symbol, token name, 24h volume, liquidity, 24h price change, FDV, and
-the DexScreener URL.
+`AUTO_TRADING_ENABLED` is intentionally disabled by default. Alpha Hunter Agent
+does not connect wallets, does not request private keys, and does not execute
+transactions.
 
-Automatic trading is disabled by default. The agent only reads market data,
-saves CSV output, and sends notifications.
+## Running
 
-## Run
+Run the scanner:
 
 ```bash
 python main.py
 ```
 
-The process keeps running because `schedule` executes the scan every 10 minutes.
-Use `Ctrl+C` to stop it.
-
-## Dashboard
-
-Start the Streamlit dashboard in a second terminal after installing the
-requirements:
+Run the dashboard:
 
 ```bash
 streamlit run dashboard/streamlit_app.py
 ```
 
-The dashboard reads `data/alpha_tokens.csv`, highlights the top token by 24h
-volume, shows token count, average 24h volume, maximum 24h price change, and
-refreshes automatically every 30 seconds.
-
-## Output
+Outputs:
 
 - CSV: `data/alpha_tokens.csv`
 - Logs: `logs/app.log`
+- Telegram: configured chat ID when enabled
 
-## Notes
+## Risk Statement
 
-DexScreener is a public market data source. Returned tokens are not investment
-advice, and the scanner does not perform wallet operations or trades.
+Alpha Hunter Agent is a research and notification tool. It uses public market
+data and heuristic scoring, which can be incomplete, delayed, or misleading.
+Scores and summaries are not financial advice. Users should verify token
+contracts, liquidity, holders, project credibility, and exchange conditions
+before making any decision.
+
+The agent is intentionally read-only:
+
+- It does not connect to wallets.
+- It does not sign messages.
+- It does not execute swaps.
+- It does not automate trading.

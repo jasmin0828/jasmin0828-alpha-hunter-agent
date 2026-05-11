@@ -52,7 +52,7 @@ class TelegramNotifier:
 
     def _format_top_tokens_message(self, tokens: pd.DataFrame) -> str:
         """Build a compact plain-text message with the requested token fields."""
-        lines = ["Alpha Hunter Agent v0.1 - Top Tokens"]
+        lines = ["Alpha Hunter Agent v0.5 - Top Tokens"]
 
         for index, token in tokens.reset_index(drop=True).iterrows():
             rank = index + 1
