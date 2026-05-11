@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.ai.alpha_analyzer import AlphaAnalyzer
 from src.api.dexscreener_client import DexScreenerClient
 from src.utils.paths import DATA_DIR, ensure_project_directories
 
@@ -24,9 +25,15 @@ class AlphaTokenService:
     MAX_PRICE_CHANGE_24H = 200
     MAX_FDV = 50_000_000
 
-    def __init__(self, client: DexScreenerClient | None = None, csv_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        client: DexScreenerClient | None = None,
+        analyzer: AlphaAnalyzer | None = None,
+        csv_path: Path | None = None,
+    ) -> None:
         self.logger = logging.getLogger(__name__)
         self.client = client or DexScreenerClient()
+        self.analyzer = analyzer or AlphaAnalyzer()
         self.csv_path = csv_path or self.CSV_PATH
 
     def find_and_save_top_tokens(self) -> pd.DataFrame:
@@ -46,7 +53,8 @@ class AlphaTokenService:
             return self._save_empty_csv()
 
         filtered_tokens = self._filter_tokens(tokens)
-        top_tokens = self._rank_tokens(filtered_tokens)
+        analyzed_tokens = self.analyzer.analyze_tokens(filtered_tokens)
+        top_tokens = self._rank_tokens(analyzed_tokens)
         top_tokens.to_csv(self.csv_path, index=False)
 
         self.logger.info("Saved %s filtered tokens to %s", len(top_tokens), self.csv_path)
@@ -132,6 +140,10 @@ class AlphaTokenService:
             "price_change_24h",
             "fdv",
             "market_cap",
+            "pair_created_at",
+            "alpha_score",
+            "risk_score",
+            "ai_summary",
             "dex",
             "url",
         ]
@@ -161,6 +173,10 @@ class AlphaTokenService:
             "price_change_24h",
             "fdv",
             "market_cap",
+            "pair_created_at",
+            "alpha_score",
+            "risk_score",
+            "ai_summary",
             "dex",
             "url",
         ]

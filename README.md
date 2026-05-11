@@ -15,6 +15,7 @@ This project does not connect to wallets and does not execute trades.
 - Saves results to `data/alpha_tokens.csv`.
 - Writes runtime logs to `logs/app.log`.
 - Sends Telegram messages when Top tokens are found.
+- Adds AI Intelligence Layer v0.4 scores and summaries for each token.
 - Runs once at startup and then every 10 minutes.
 
 ## Filters
@@ -26,6 +27,29 @@ Tokens must match all of these rules:
 - `price_change_24h >= -30`
 - `price_change_24h <= 200`
 - `fdv < 50000000`
+
+## AI Intelligence Layer v0.4
+
+Each filtered token receives deterministic AI-style analysis based on:
+
+- `liquidity_usd`
+- `volume_24h`
+- `fdv`
+- `price_change_24h`
+- `pair_created_at`
+
+The output includes:
+
+- `alpha_score`: 0-100 score for alpha potential.
+- `risk_score`: 0-100 score where higher means higher risk.
+- `ai_summary`: short summary covering momentum, liquidity, FDV, rug risk,
+  suspicious volume, and speculative activity.
+
+Example AI Summary:
+
+```text
+Strong momentum detected | Healthy liquidity | Moderate FDV | Rug risk: LOW | Short-term speculative activity possible
+```
 
 ## Project Structure
 
@@ -42,6 +66,8 @@ alpha-hunter-ai/
 ├── logs/
 │   └── app.log
 └── src/
+    ├── ai/
+    │   └── alpha_analyzer.py
     ├── api/
     │   └── dexscreener_client.py
     ├── notifications/

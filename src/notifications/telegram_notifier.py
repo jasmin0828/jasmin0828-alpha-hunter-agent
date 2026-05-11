@@ -64,6 +64,9 @@ class TelegramNotifier:
                     f"liquidity_usd: {self._format_number(token.get('liquidity_usd'))}",
                     f"price_change_24h: {self._format_number(token.get('price_change_24h'))}%",
                     f"fdv: {self._format_number(token.get('fdv'))}",
+                    f"alpha_score: {self._format_number(token.get('alpha_score'))}",
+                    f"risk_score: {self._format_number(token.get('risk_score'))}",
+                    f"AI Summary: {self._value(token, 'ai_summary')}",
                     f"DexScreener URL: {self._value(token, 'url')}",
                 ]
             )

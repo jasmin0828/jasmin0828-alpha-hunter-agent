@@ -25,6 +25,9 @@ DISPLAY_COLUMNS = [
     "volume_24h",
     "price_change_24h",
     "fdv",
+    "alpha_score",
+    "risk_score",
+    "ai_summary",
 ]
 
 
@@ -123,6 +126,8 @@ def load_alpha_tokens(csv_path: Path) -> pd.DataFrame:
         "volume_24h",
         "price_change_24h",
         "fdv",
+        "alpha_score",
+        "risk_score",
     ]
     for column in numeric_columns:
         df[column] = pd.to_numeric(df[column], errors="coerce")
@@ -169,7 +174,7 @@ def render_header(updated_at: str) -> None:
         f"""
         <div class="hero">
             <h1>Alpha Hunter Agent</h1>
-            <p>Solana alpha token scanner dashboard v0.1 · Auto refresh every 30 seconds · Data updated at {updated_at}</p>
+            <p>Solana alpha token scanner dashboard v0.4 · Auto refresh every 30 seconds · Data updated at {updated_at}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -177,15 +182,17 @@ def render_header(updated_at: str) -> None:
 
 
 def render_metrics(df: pd.DataFrame) -> None:
-    """Render token count, average volume, and max 24h gain."""
+    """Render token count, average volume, max gain, and average alpha score."""
     token_count = len(df)
     avg_volume = df["volume_24h"].mean() if token_count else 0
     max_gain = df["price_change_24h"].max() if token_count else 0
+    avg_alpha = df["alpha_score"].mean() if token_count else 0
 
-    col_count, col_volume, col_gain = st.columns(3)
+    col_count, col_volume, col_gain, col_alpha = st.columns(4)
     col_count.metric("Token Count", f"{token_count:,}")
     col_volume.metric("Average Volume 24h", format_compact_usd(avg_volume))
     col_gain.metric("Max Price Change 24h", f"{max_gain:.2f}%")
+    col_alpha.metric("Average Alpha Score", f"{avg_alpha:.2f}")
 
 
 def render_top_token(df: pd.DataFrame) -> str | None:
@@ -204,6 +211,7 @@ def render_top_token(df: pd.DataFrame) -> str | None:
             Top Token · <strong>{top_row["symbol"]}</strong> / {top_row["token_name"]}
             · 24h Volume {format_compact_usd(top_row["volume_24h"])}
             · 24h Change {top_row["price_change_24h"]:.2f}%
+            · Alpha Score {top_row["alpha_score"]:.2f}
         </div>
         """,
         unsafe_allow_html=True,
@@ -215,10 +223,11 @@ def render_top_token(df: pd.DataFrame) -> str | None:
 def render_token_table(df: pd.DataFrame, top_symbol: str | None) -> None:
     """Render the token table with top-token row highlighting."""
     st.subheader("Token Table")
+    display_df = df.rename(columns={"ai_summary": "AI Summary"})
 
     # Apply numeric formatting and row styling for a competition-ready table.
     styled_df = (
-        df.style.apply(highlight_top_token, top_symbol=top_symbol, axis=1)
+        display_df.style.apply(highlight_top_token, top_symbol=top_symbol, axis=1)
         .format(
             {
                 "price_usd": "${:,.8f}",
@@ -226,6 +235,8 @@ def render_token_table(df: pd.DataFrame, top_symbol: str | None) -> None:
                 "volume_24h": "${:,.2f}",
                 "price_change_24h": "{:,.2f}%",
                 "fdv": "${:,.2f}",
+                "alpha_score": "{:,.2f}",
+                "risk_score": "{:,.2f}",
             },
             na_rep="-",
         )
