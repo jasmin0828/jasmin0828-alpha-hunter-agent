@@ -7,6 +7,7 @@ and it never executes trades.
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import pandas as pd
@@ -206,6 +207,10 @@ def main() -> None:
 
     logger.info("Starting Alpha Hunter Agent v1.1")
     run_scheduled_scan()
+
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        logger.info("GitHub Actions detected; completed one scan and exiting")
+        return
 
     while True:
         time.sleep(RUN_INTERVAL_SECONDS)
