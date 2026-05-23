@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import requests
@@ -15,6 +16,8 @@ class DexScreenerClient:
     CHAIN_ID = "solana"
     REQUEST_TIMEOUT_SECONDS = 15
     TOKEN_BATCH_SIZE = 30
+    MAX_RETRIES = 3
+    RETRY_DELAY_SECONDS = 3
 
     def __init__(self) -> None:
         self.logger = logging.getLogger(__name__)
@@ -65,19 +68,44 @@ class DexScreenerClient:
         return pairs
 
     def _get_json(self, endpoint: str) -> Any:
-        """Call DexScreener and return decoded JSON with network error context."""
+        """Call DexScreener with retry and return decoded JSON."""
         url = f"{self.BASE_URL}{endpoint}"
+        retryable_errors = (
+            requests.exceptions.SSLError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.RequestException,
+        )
 
-        try:
-            response = self.session.get(url, timeout=self.REQUEST_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as exc:
-            self.logger.exception("DexScreener request failed: %s", url)
-            raise RuntimeError(f"DexScreener request failed: {url}") from exc
-        except ValueError as exc:
-            self.logger.exception("DexScreener returned invalid JSON: %s", url)
-            raise RuntimeError(f"DexScreener returned invalid JSON: {url}") from exc
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                response = self.session.get(url, timeout=self.REQUEST_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                return response.json()
+            except ValueError as exc:
+                self.logger.exception("DexScreener returned invalid JSON: %s", url)
+                raise RuntimeError(f"DexScreener returned invalid JSON: {url}") from exc
+            except retryable_errors as exc:
+                if attempt >= self.MAX_RETRIES:
+                    self.logger.warning(
+                        "DexScreener request failed after %s attempts: %s (%s)",
+                        self.MAX_RETRIES,
+                        url,
+                        exc,
+                    )
+                    raise RuntimeError(f"DexScreener request failed: {url}") from exc
+
+                self.logger.warning(
+                    "DexScreener request failed on attempt %s/%s: %s (%s). Retrying in %s seconds",
+                    attempt,
+                    self.MAX_RETRIES,
+                    url,
+                    exc,
+                    self.RETRY_DELAY_SECONDS,
+                )
+                time.sleep(self.RETRY_DELAY_SECONDS)
+
+        raise RuntimeError(f"DexScreener request failed: {url}")
 
     def _chunk_addresses(self, addresses: list[str]) -> list[list[str]]:
         """Split addresses into chunks accepted by DexScreener token lookup."""

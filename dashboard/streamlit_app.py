@@ -1,4 +1,4 @@
-"""Competition dashboard for Alpha Hunter Agent v0.5."""
+"""Competition dashboard for Alpha Hunter Agent v1.1."""
 
 import html
 from datetime import datetime
@@ -28,6 +28,37 @@ DISPLAY_COLUMNS = [
     "fdv",
     "alpha_score",
     "risk_score",
+    "score_change_10m",
+    "score_change_30m",
+    "volume_change_10m",
+    "volume_spike_ratio",
+    "liquidity_change_10m",
+    "price_change_since_last_scan",
+    "momentum_status",
+    "narrative",
+    "narrative_score",
+    "smart_money_score",
+    "smart_money_signal",
+    "token_age_minutes",
+    "token_age_hours",
+    "token_age_bucket",
+    "rug_risk_level",
+    "rug_risk_score",
+    "agent_score",
+    "first_seen_at",
+    "is_first_seen",
+    "scan_count",
+    "consecutive_up_count",
+    "early_alpha_score",
+    "early_alpha_reason",
+    "alert_level",
+    "alert_reason",
+    "volume_liquidity_ratio",
+    "fdv_liquidity_ratio",
+    "extreme_pump_flag",
+    "low_liquidity_flag",
+    "suspicious_volume_flag",
+    "risk_notes",
     "ai_summary",
 ]
 
@@ -221,9 +252,32 @@ def load_alpha_tokens(csv_path: Path) -> pd.DataFrame:
         "fdv",
         "alpha_score",
         "risk_score",
+        "score_change_10m",
+        "score_change_30m",
+        "volume_change_10m",
+        "volume_spike_ratio",
+        "liquidity_change_10m",
+        "price_change_since_last_scan",
+        "narrative_score",
+        "smart_money_score",
+        "token_age_minutes",
+        "token_age_hours",
+        "rug_risk_score",
+        "agent_score",
+        "scan_count",
+        "consecutive_up_count",
+        "early_alpha_score",
+        "volume_liquidity_ratio",
+        "fdv_liquidity_ratio",
     ]
     for column in numeric_columns:
         df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    # Boolean flags may arrive as CSV text, integers, or SQLite values.
+    for column in ["extreme_pump_flag", "low_liquidity_flag", "suspicious_volume_flag", "is_first_seen"]:
+        df[column] = df[column].fillna(False).map(
+            lambda value: str(value).strip().lower() in {"1", "true", "yes"}
+        )
 
     # Keep the dashboard focused on the requested competition fields.
     return df[DISPLAY_COLUMNS].copy()
@@ -293,7 +347,7 @@ def render_header(updated_at: str) -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <h1>Alpha Hunter Agent v0.5</h1>
+            <h1>Alpha Hunter Agent v1.1</h1>
             <p>AI market-intelligence agent for Solana token discovery · Built for OKX Agentic Wallet showcase · Data updated at {updated_at}</p>
             <div class="hero-badges">
                 <span class="badge">Read-only agent</span>
@@ -301,6 +355,13 @@ def render_header(updated_at: str) -> None:
                 <span class="badge">Telegram alerts</span>
                 <span class="badge">Auto refresh 30s</span>
                 <span class="badge">No wallet connection</span>
+                <span class="badge">Momentum engine</span>
+                <span class="badge">Narrative Engine</span>
+                <span class="badge">Smart Money Intelligence</span>
+                <span class="badge">Risk Intelligence</span>
+                <span class="badge">Token Age Intelligence</span>
+                <span class="badge">Signal Calibration</span>
+                <span class="badge">Early Alpha Engine</span>
             </div>
         </div>
         """,
@@ -331,7 +392,7 @@ def render_top_token(df: pd.DataFrame) -> str | None:
         return None
 
     # The demo spotlight favors the strongest AI-ranked token.
-    top_row = df.sort_values(["alpha_score", "volume_24h"], ascending=[False, False]).iloc[0]
+    top_row = df.sort_values(["early_alpha_score", "alpha_score", "volume_24h"], ascending=[False, False, False]).iloc[0]
     top_symbol = str(top_row["symbol"])
     safe_symbol = html.escape(top_symbol)
     safe_token_name = html.escape(str(top_row["token_name"]))
@@ -341,6 +402,10 @@ def render_top_token(df: pd.DataFrame) -> str | None:
         <div class="top-token">
             <div class="top-token-title">Top AI Candidate · {safe_symbol} / {safe_token_name}</div>
             <div class="top-token-grid">
+                <div class="top-token-metric">
+                    <div class="top-token-label">Early Alpha</div>
+                    <div class="top-token-value">{top_row["early_alpha_score"]:.2f}</div>
+                </div>
                 <div class="top-token-metric">
                     <div class="top-token-label">Alpha Score</div>
                     <div class="top-token-value">{top_row["alpha_score"]:.2f}</div>
@@ -356,10 +421,6 @@ def render_top_token(df: pd.DataFrame) -> str | None:
                 <div class="top-token-metric">
                     <div class="top-token-label">Liquidity</div>
                     <div class="top-token-value">{format_compact_usd(top_row["liquidity_usd"])}</div>
-                </div>
-                <div class="top-token-metric">
-                    <div class="top-token-label">24h Move</div>
-                    <div class="top-token-value">{top_row["price_change_24h"]:.2f}%</div>
                 </div>
             </div>
         </div>
@@ -426,6 +487,358 @@ def render_token_table(df: pd.DataFrame, top_symbol: str | None) -> None:
     st.dataframe(styled_df, width="stretch", hide_index=True)
 
 
+def render_v07_momentum_sections(df: pd.DataFrame) -> None:
+    """Render v0.7 momentum sections from trend-enriched CSV output."""
+    if df.empty or "momentum_status" not in df.columns:
+        return
+
+    heating = df[df["momentum_status"] == "HEATING_UP"].copy()
+    hot = df[df["momentum_status"] == "HOT"].copy()
+    cooling = df[df["momentum_status"] == "COOLING_DOWN"].copy()
+    trend_columns = [
+        "symbol",
+        "token_name",
+        "alpha_score",
+        "risk_score",
+        "score_change_10m",
+        "score_change_30m",
+        "volume_change_10m",
+        "volume_spike_ratio",
+        "momentum_status",
+    ]
+
+    st.markdown('<div class="section-title">Heating Up Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(heating[trend_columns], width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">HOT Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(hot[trend_columns], width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">Cooling Down Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(cooling[trend_columns], width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">Score Trend</div>', unsafe_allow_html=True)
+    score_trend = df.sort_values(["score_change_10m", "score_change_30m"], ascending=[False, False])
+    st.dataframe(score_trend[trend_columns].head(10), width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">Volume Spike</div>', unsafe_allow_html=True)
+    volume_spike = df.sort_values("volume_spike_ratio", ascending=False)
+    st.dataframe(
+        volume_spike[
+            [
+                "symbol",
+                "token_name",
+                "volume_24h",
+                "volume_change_10m",
+                "volume_spike_ratio",
+                "liquidity_change_10m",
+                "momentum_status",
+            ]
+        ].head(10),
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def render_v08_intelligence_sections(df: pd.DataFrame) -> None:
+    """Render Narrative Engine and Smart Money Intelligence sections."""
+    required = {"narrative", "smart_money_signal", "smart_money_score", "narrative_score"}
+    if df.empty or not required.issubset(df.columns):
+        return
+
+    narrative_columns = [
+        "symbol",
+        "token_name",
+        "narrative",
+        "narrative_score",
+        "alpha_score",
+        "smart_money_score",
+        "smart_money_signal",
+    ]
+
+    st.markdown('<div class="section-title">Narrative Heat Map</div>', unsafe_allow_html=True)
+    heat_map = df.sort_values(["narrative_score", "alpha_score"], ascending=[False, False])
+    st.dataframe(heat_map[narrative_columns].head(15), width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">Top AI Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["narrative"] == "AI"].sort_values("alpha_score", ascending=False)[narrative_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Top Meme Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["narrative"] == "Meme"].sort_values("alpha_score", ascending=False)[narrative_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    smart_columns = [
+        "symbol",
+        "token_name",
+        "alpha_score",
+        "risk_score",
+        "momentum_status",
+        "narrative",
+        "smart_money_score",
+        "smart_money_signal",
+    ]
+    st.markdown('<div class="section-title">Smart Money Accumulation</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["smart_money_signal"] == "ACCUMULATION"].sort_values("smart_money_score", ascending=False)[smart_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Smart Money Exiting</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["smart_money_signal"] == "EXITING"].sort_values("smart_money_score", ascending=True)[smart_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Narrative Distribution Chart</div>', unsafe_allow_html=True)
+    narrative_counts = df["narrative"].value_counts()
+    st.bar_chart(narrative_counts)
+
+
+def render_v09_risk_sections(df: pd.DataFrame) -> None:
+    """Render Risk Intelligence Engine panels."""
+    required = {
+        "rug_risk_level",
+        "rug_risk_score",
+        "volume_liquidity_ratio",
+        "fdv_liquidity_ratio",
+        "suspicious_volume_flag",
+        "extreme_pump_flag",
+        "risk_notes",
+    }
+    if df.empty or not required.issubset(df.columns):
+        return
+
+    risk_columns = [
+        "symbol",
+        "token_name",
+        "alpha_score",
+        "risk_score",
+        "token_age_bucket",
+        "token_age_hours",
+        "rug_risk_level",
+        "rug_risk_score",
+        "volume_liquidity_ratio",
+        "fdv_liquidity_ratio",
+        "risk_notes",
+    ]
+
+    st.markdown('<div class="section-title">Risk Intelligence</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df.sort_values(["rug_risk_score", "volume_liquidity_ratio"], ascending=[False, False])[risk_columns].head(15),
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">High Risk Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["rug_risk_level"] == "HIGH"].sort_values("rug_risk_score", ascending=False)[risk_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Low Risk Alpha Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["rug_risk_level"] == "LOW"].sort_values("alpha_score", ascending=False)[risk_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Suspicious Volume Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["suspicious_volume_flag"]].sort_values("volume_liquidity_ratio", ascending=False)[risk_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Extreme Pump Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["extreme_pump_flag"]].sort_values("price_change_24h", ascending=False)[
+            risk_columns + ["price_change_24h"]
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def render_v091_token_age_sections(df: pd.DataFrame) -> None:
+    """Render Token Age Intelligence panels."""
+    required = {"token_age_bucket", "token_age_hours", "alpha_score", "rug_risk_level"}
+    if df.empty or not required.issubset(df.columns):
+        return
+
+    age_columns = [
+        "symbol",
+        "token_name",
+        "alpha_score",
+        "risk_score",
+        "token_age_bucket",
+        "token_age_hours",
+        "rug_risk_level",
+        "rug_risk_score",
+    ]
+
+    st.markdown('<div class="section-title">Token Age Distribution</div>', unsafe_allow_html=True)
+    age_counts = df["token_age_bucket"].fillna("UNKNOWN").value_counts()
+    st.bar_chart(age_counts)
+
+    st.markdown('<div class="section-title">NEWBORN Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["token_age_bucket"] == "NEWBORN"].sort_values("alpha_score", ascending=False)[age_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">EARLY Trending Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["token_age_bucket"] == "EARLY"].sort_values(["alpha_score", "volume_24h"], ascending=[False, False])[
+            age_columns + ["volume_24h"]
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">OLD Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["token_age_bucket"] == "OLD"].sort_values("token_age_hours", ascending=False)[age_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def render_v10_signal_sections(df: pd.DataFrame) -> None:
+    """Render Signal Calibration panels."""
+    required = {"alert_level", "alert_reason", "agent_score"}
+    if df.empty or not required.issubset(df.columns):
+        return
+
+    signal_columns = [
+        "symbol",
+        "token_name",
+        "alert_level",
+        "agent_score",
+        "alert_reason",
+        "alpha_score",
+        "rug_risk_level",
+        "token_age_bucket",
+        "narrative",
+        "smart_money_signal",
+    ]
+
+    st.markdown('<div class="section-title">Signal Calibration</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df.sort_values("agent_score", ascending=False)[signal_columns].head(15),
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">CRITICAL Signals</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["alert_level"] == "CRITICAL"].sort_values("agent_score", ascending=False)[signal_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">HIGH Signals</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["alert_level"] == "HIGH"].sort_values("agent_score", ascending=False)[signal_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">WATCH Signals</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["alert_level"] == "WATCH"].sort_values("agent_score", ascending=False)[signal_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Agent Score Ranking</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df.sort_values("agent_score", ascending=False)[signal_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Alert Level Distribution</div>', unsafe_allow_html=True)
+    st.bar_chart(df["alert_level"].fillna("IGNORE").value_counts())
+
+
+def render_v11_early_alpha_sections(df: pd.DataFrame) -> None:
+    """Render Early Alpha Engine panels."""
+    required = {
+        "early_alpha_score",
+        "early_alpha_reason",
+        "is_first_seen",
+        "scan_count",
+        "consecutive_up_count",
+        "token_age_bucket",
+        "alert_level",
+    }
+    if df.empty or not required.issubset(df.columns):
+        return
+
+    early_columns = [
+        "symbol",
+        "token_name",
+        "early_alpha_score",
+        "early_alpha_reason",
+        "is_first_seen",
+        "scan_count",
+        "consecutive_up_count",
+        "token_age_bucket",
+        "alert_level",
+        "agent_score",
+        "rug_risk_level",
+    ]
+
+    st.markdown('<div class="section-title">Early Alpha Engine</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df.sort_values("early_alpha_score", ascending=False)[early_columns].head(15),
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">First Seen Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["is_first_seen"]].sort_values("early_alpha_score", ascending=False)[early_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Early Alpha Ranking</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df.sort_values(["early_alpha_score", "agent_score"], ascending=[False, False])[early_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Consecutive Momentum Tokens</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df[df["consecutive_up_count"] > 0].sort_values(
+            ["consecutive_up_count", "early_alpha_score"],
+            ascending=[False, False],
+        )[early_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown('<div class="section-title">Early Alpha Score Distribution</div>', unsafe_allow_html=True)
+    score_bins = pd.cut(
+        df["early_alpha_score"].fillna(0),
+        bins=[-1, 20, 40, 60, 75, 85, 100],
+        labels=["0-20", "21-40", "41-60", "61-75", "76-85", "86-100"],
+    )
+    st.bar_chart(score_bins.value_counts().sort_index())
+
+
 @st.fragment(run_every=REFRESH_INTERVAL)
 def render_dashboard() -> None:
     """Render dashboard content and refresh it every 30 seconds."""
@@ -439,6 +852,18 @@ def render_dashboard() -> None:
     top_symbol = render_top_token(alpha_tokens)
     st.write("")
     render_ai_summary_cards(alpha_tokens)
+    st.write("")
+    render_v07_momentum_sections(alpha_tokens)
+    st.write("")
+    render_v08_intelligence_sections(alpha_tokens)
+    st.write("")
+    render_v091_token_age_sections(alpha_tokens)
+    st.write("")
+    render_v09_risk_sections(alpha_tokens)
+    st.write("")
+    render_v11_early_alpha_sections(alpha_tokens)
+    st.write("")
+    render_v10_signal_sections(alpha_tokens)
     st.write("")
     render_token_table(alpha_tokens, top_symbol)
 

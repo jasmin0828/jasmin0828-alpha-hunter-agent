@@ -24,6 +24,39 @@ class AlphaTokenService:
     MIN_PRICE_CHANGE_24H = -30
     MAX_PRICE_CHANGE_24H = 200
     MAX_FDV = 50_000_000
+    OUTPUT_DEFAULTS = {
+        "score_change_10m": 0,
+        "score_change_30m": 0,
+        "volume_change_10m": 0,
+        "volume_spike_ratio": 1,
+        "liquidity_change_10m": 0,
+        "price_change_since_last_scan": 0,
+        "momentum_status": "STABLE",
+        "narrative": "Unknown",
+        "narrative_score": 0,
+        "smart_money_score": 0,
+        "smart_money_signal": "NEUTRAL",
+        "token_age_minutes": 0,
+        "token_age_hours": 0,
+        "token_age_bucket": "UNKNOWN",
+        "rug_risk_level": "LOW",
+        "rug_risk_score": 0,
+        "volume_liquidity_ratio": 0,
+        "fdv_liquidity_ratio": 0,
+        "extreme_pump_flag": False,
+        "low_liquidity_flag": False,
+        "suspicious_volume_flag": False,
+        "risk_notes": "",
+        "alert_level": "IGNORE",
+        "alert_reason": "",
+        "agent_score": 0,
+        "first_seen_at": "",
+        "is_first_seen": False,
+        "scan_count": 0,
+        "consecutive_up_count": 0,
+        "early_alpha_score": 0,
+        "early_alpha_reason": "",
+    }
 
     def __init__(
         self,
@@ -55,7 +88,7 @@ class AlphaTokenService:
         filtered_tokens = self._filter_tokens(tokens)
         analyzed_tokens = self.analyzer.analyze_tokens(filtered_tokens)
         top_tokens = self._rank_tokens(analyzed_tokens)
-        top_tokens.to_csv(self.csv_path, index=False)
+        self._with_output_defaults(top_tokens).to_csv(self.csv_path, index=False)
 
         self.logger.info("Saved %s filtered tokens to %s", len(top_tokens), self.csv_path)
         return top_tokens
@@ -149,7 +182,7 @@ class AlphaTokenService:
         ]
 
         if dataframe.empty:
-            return pd.DataFrame(columns=columns)
+            return self._with_output_defaults(pd.DataFrame(columns=columns))
 
         return (
             dataframe.sort_values(
@@ -160,6 +193,14 @@ class AlphaTokenService:
             .head(self.TOP_N)[columns]
             .reset_index(drop=True)
         )
+
+    def _with_output_defaults(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        """Ensure raw CSV output keeps v0.7-v1.0 columns during scans."""
+        output = dataframe.copy()
+        for column, default in self.OUTPUT_DEFAULTS.items():
+            if column not in output.columns:
+                output[column] = default
+        return output
 
     def _save_empty_csv(self) -> pd.DataFrame:
         """Save an empty CSV with stable headers when no tokens match."""
@@ -180,6 +221,6 @@ class AlphaTokenService:
             "dex",
             "url",
         ]
-        dataframe = pd.DataFrame(columns=columns)
+        dataframe = self._with_output_defaults(pd.DataFrame(columns=columns))
         dataframe.to_csv(self.csv_path, index=False)
         return dataframe
