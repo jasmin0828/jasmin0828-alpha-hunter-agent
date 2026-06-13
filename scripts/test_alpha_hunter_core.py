@@ -16,7 +16,7 @@ from src.agents.alpha_hunter_core import AlphaHunterCore  # noqa: E402
 
 def main() -> None:
     """Run Core once, print JSON summary, and validate generated artifacts."""
-    social_signals_path = PROJECT_ROOT / "data" / "social_signals_sample.json"
+    social_signals_path = PROJECT_ROOT / "examples" / "social_signals_sample.json"
     core = AlphaHunterCore(project_root=PROJECT_ROOT)
 
     result = core.run_pipeline(

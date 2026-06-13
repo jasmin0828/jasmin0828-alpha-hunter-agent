@@ -19,7 +19,7 @@ from src.storage.sqlite_store import SQLiteStore  # noqa: E402
 
 
 REPORTS_DIR = PROJECT_ROOT / "reports"
-SOCIAL_SIGNALS_SAMPLE = PROJECT_ROOT / "data" / "social_signals_sample.json"
+SOCIAL_SIGNALS_SAMPLE = PROJECT_ROOT / "examples" / "social_signals_sample.json"
 
 
 def generate_social_enhanced_daily_report() -> tuple[dict, Path]:

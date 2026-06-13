@@ -1,0 +1,42 @@
+[
+  {
+    "source_platform": "X",
+    "author": "market_theme_researcher",
+    "content": "Football Capital Markets keeps showing up in sports finance chatter. FCM volume is not huge yet, but the Sports theme is worth tracking against actual market data.",
+    "url": "https://example.com/social/fcm-sports-theme",
+    "mentioned_tokens": ["FCM"],
+    "mentioned_themes": ["Sports"],
+    "engagement_score": 72,
+    "posted_at": "2026-06-09T00:30:00Z"
+  },
+  {
+    "source_platform": "Threads",
+    "author": "narrative_watch",
+    "content": "Sports tokens are getting a small second look today. Still early, need liquidity and real user attention before calling it anything more than research watch.",
+    "url": "https://example.com/social/sports-theme-watch",
+    "mentioned_tokens": [],
+    "mentioned_themes": ["Sports"],
+    "engagement_score": 44,
+    "posted_at": "2026-06-09T00:45:00Z"
+  },
+  {
+    "source_platform": "Manual Note",
+    "author": "large_account_alpha",
+    "content": "GOKU will send 100x soon. No chart needed. Pure conviction.",
+    "url": "https://example.com/social/goku-hype",
+    "mentioned_tokens": ["GOKU"],
+    "mentioned_themes": ["Unknown"],
+    "engagement_score": 88,
+    "posted_at": "2026-06-09T01:05:00Z"
+  },
+  {
+    "source_platform": "X",
+    "author": "liquidity_notes",
+    "content": "TOESCOIN has volume, but the theme is still unclear. Good example of why social mentions need market confirmation.",
+    "url": "https://example.com/social/toescoin-volume",
+    "mentioned_tokens": ["TOESCOIN"],
+    "mentioned_themes": ["Unknown"],
+    "engagement_score": 31,
+    "posted_at": "2026-06-09T01:15:00Z"
+  }
+]

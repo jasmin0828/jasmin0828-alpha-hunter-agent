@@ -16,7 +16,7 @@ from src.agents.theme_scanner_agent import ThemeScannerAgent  # noqa: E402
 from src.storage.sqlite_store import SQLiteStore  # noqa: E402
 
 
-SAMPLE_FILE = PROJECT_ROOT / "data" / "social_signals_sample.json"
+SAMPLE_FILE = PROJECT_ROOT / "examples" / "social_signals_sample.json"
 
 
 def main() -> None:

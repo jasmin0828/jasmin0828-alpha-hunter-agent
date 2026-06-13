@@ -29,7 +29,7 @@ from src.agents.theme_scanner_agent import ThemeScannerAgent
 DATA_FILE = PROJECT_ROOT / "data" / "alpha_tokens.csv"
 MANIFEST_FILE = PROJECT_ROOT / "data" / "market_system_manifest.json"
 DB_FILE = PROJECT_ROOT / "data" / "alpha_hunter.db"
-SOCIAL_SIGNALS_SAMPLE_FILE = PROJECT_ROOT / "data" / "social_signals_sample.json"
+SOCIAL_SIGNALS_SAMPLE_FILE = PROJECT_ROOT / "examples" / "social_signals_sample.json"
 
 # These are the fields used by the competition dashboard table.
 DISPLAY_COLUMNS = [
