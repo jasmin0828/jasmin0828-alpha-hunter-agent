@@ -1,15 +1,46 @@
 # Alpha Hunter Market System
 
-Alpha Hunter Market System is a read-only Multi-chain Alpha Hunter and AI
-market intelligence system. It uses public market data to discover token
-attention, analyze narratives and risk, track early alpha signals, and prepare
-long-term research memory across Ethereum, Solana, and BSC.
+A multi-chain crypto market intelligence system for discovering emerging
+narratives, monitoring early on-chain signals, and generating research-ready
+alpha reports.
+
+> Current version: v1.1  
+> Status: Observation Phase  
+> Mode: Read-only market intelligence system
 
 Alpha Hunter Market System is the top-level parent system. Market Intelligence,
 AI Workflow Engine, Memory Layer, Content Engine, Automation Layer, and Future
-AI Trading Agent are its direct subsystems. The system does not connect
-wallets, request private keys, sign transactions, execute swaps, or automate
-trading.
+AI Trading Agent are its direct subsystems.
+
+## Supported Chains
+
+- Ethereum
+- Solana
+- BSC
+
+## What It Does
+
+- Scans multi-chain token markets.
+- Filters early alpha candidates.
+- Tracks signal quality.
+- Supports agent-based analysis.
+- Generates daily alpha reports.
+- Maintains local memory and research artifacts.
+- Provides a Streamlit dashboard for monitoring.
+- Runs GitHub Actions validation for baseline health checks.
+
+## Safety Boundary
+
+Alpha Hunter is not a trading bot.
+
+It does not:
+
+- connect wallets
+- store private keys
+- sign transactions
+- execute swaps
+- place trades
+- provide financial advice
 
 ## System Architecture
 
@@ -33,6 +64,35 @@ Alpha Hunter Market System
 +-- Future AI Trading Agent
 ```
 
+## System Overview
+
+```text
+Ethereum / Solana / BSC
+        |
+        v
+Multi-chain Scanner
+        |
+        v
+Signal Quality / Risk Intelligence
+        |
+        v
+Agent Pipeline
+        |
+        v
+Daily Alpha Report
+        |
+        v
+Memory Layer / Content Layer / Dashboard
+```
+
+## Observation Phase
+
+Alpha Hunter Market System v1.1 is in Observation Phase. The system is designed
+to collect market evidence, monitor early signals, evaluate signal quality, and
+prepare research reports without executing trades or making automated decisions.
+Human review remains responsible for interpreting signals, identifying false
+positives, and deciding any next research steps.
+
 ## Current Capabilities
 
 - Multi-chain hot-token discovery from DexScreener public APIs.
@@ -49,8 +109,10 @@ Alpha Hunter Market System
   - `early_alpha_score`
   - `early_alpha_reason`
 - Narrative, Smart Money, Risk Intelligence, Token Age, and Signal Calibration.
-- Telegram alerts for `CRITICAL`, `HIGH`, and `WATCH` signals.
+- Telegram alerts for configured `CRITICAL`, `HIGH`, and `WATCH` signals.
 - Streamlit dashboard for live market intelligence with chain filtering.
+- Agent Pipeline preview for theme scanning, social signal review, evidence
+  grading, daily report generation, and memory archiving.
 - Runtime manifest in `data/market_system_manifest.json`.
 - Signal transition events in SQLite `signal_events`.
 - Signal outcome tracking for 30m, 1h, and 4h follow-up windows.
@@ -155,21 +217,6 @@ Multi-chain settings live in `config.py`:
 
 - `SUPPORTED_CHAINS = ["ethereum", "solana", "bsc"]`
 - `CHAIN_FILTERS` defines per-chain liquidity, volume, FDV, and price-change thresholds.
-
-## v1.2 Direction
-
-The current v1.2 architecture milestone starts Signal Memory and Daily Brief:
-
-- reduce repeated WATCH alerts by pushing only new signals and upgrades
-- record signal transition events in SQLite
-- evaluate 30m, 1h, and 4h signal outcomes
-- generate daily markdown reports in `memory/daily/`
-- send daily and weekly Telegram reports for operator review
-- build token and narrative memory for Obsidian/RAG workflows
-- prepare reusable content drafts in `content/`
-
-Current architecture readiness is summarized in
-[docs/system_readiness_report.md](docs/system_readiness_report.md).
 
 ## Safety Statement
 
