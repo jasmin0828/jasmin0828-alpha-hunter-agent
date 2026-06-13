@@ -1,4 +1,4 @@
-"""Signal Calibration service for Alpha Hunter Agent v1.0."""
+"""Signal Calibration service for Alpha Hunter Market System."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import pandas as pd
 
 class SignalCalibrationService:
     """Convert raw alpha/risk/intelligence metrics into alert tiers."""
+
+    OLD_SCAN_SUPPRESSION_THRESHOLD = 100
 
     MOMENTUM_BONUS = {
         "HOT": 10,
@@ -67,6 +69,8 @@ class SignalCalibrationService:
             "agent_score": 0,
             "early_alpha_score": 0,
             "early_alpha_reason": "",
+            "scan_count": 0,
+            "consecutive_up_count": 0,
             "alert_level": "IGNORE",
             "alert_reason": "",
         }
@@ -78,6 +82,8 @@ class SignalCalibrationService:
     def _alert_level(self, token: pd.Series) -> str:
         """Assign CRITICAL, HIGH, WATCH, or IGNORE."""
         if token.get("rug_risk_level") == "HIGH":
+            return "IGNORE"
+        if self._is_repeated_old_watch_noise(token):
             return "IGNORE"
 
         early_alpha_score = float(token.get("early_alpha_score") or 0)
@@ -113,6 +119,8 @@ class SignalCalibrationService:
         """Explain why the token landed in its alert tier."""
         if token.get("rug_risk_level") == "HIGH":
             return "ignored: rug risk HIGH"
+        if self._is_repeated_old_watch_noise(token):
+            return "ignored: repeated OLD WATCH noise"
 
         reasons: list[str] = []
         early_alpha_score = float(token.get("early_alpha_score") or 0)
@@ -150,3 +158,23 @@ class SignalCalibrationService:
         if not reasons:
             reasons.append("below calibrated alert thresholds")
         return "; ".join(reasons)
+
+    def _is_repeated_old_watch_noise(self, token: pd.Series) -> bool:
+        """Suppress stale OLD-token WATCH fallback unless fresh momentum is strong."""
+        token_age_bucket = token.get("token_age_bucket")
+        if token_age_bucket != "OLD":
+            return False
+
+        scan_count = int(token.get("scan_count") or 0)
+        if scan_count <= self.OLD_SCAN_SUPPRESSION_THRESHOLD:
+            return False
+
+        early_alpha_score = float(token.get("early_alpha_score") or 0)
+        consecutive_up_count = int(token.get("consecutive_up_count") or 0)
+        momentum_status = token.get("momentum_status")
+
+        return not (
+            early_alpha_score >= 60
+            or consecutive_up_count >= 2
+            or momentum_status in ["HOT", "HEATING_UP"]
+        )
