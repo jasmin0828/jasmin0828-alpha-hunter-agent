@@ -1,156 +1,119 @@
-# Alpha Hunter Agent v0.5
+# Alpha Hunter Market System
 
-Alpha Hunter Agent is an AI market-intelligence agent built for the OKX Agentic
-Wallet competition showcase. It watches Solana token activity from public
-DexScreener data, filters noisy markets, scores each candidate with an AI
-Intelligence Layer, and delivers a dashboard plus Telegram alerts for fast
-human review.
+Alpha Hunter Market System is a read-only Multi-chain Alpha Hunter and AI
+market intelligence system. It uses public market data to discover token
+attention, analyze narratives and risk, track early alpha signals, and prepare
+long-term research memory across Ethereum, Solana, and BSC.
 
-The product focus is simple: help a user detect early market attention without
-asking the agent to custody funds, connect a wallet, or execute trades.
-
-## Core Capabilities
-
-- Solana hot-token discovery from DexScreener public APIs.
-- Market-quality filters for liquidity, 24h volume, 24h price change, and FDV.
-- Top 10 alpha candidate output to `data/alpha_tokens.csv`.
-- AI Intelligence Layer v0.4 with alpha score, risk score, and AI Summary.
-- Streamlit competition dashboard with score colors, risk colors, and summary cards.
-- Telegram Alert delivery when Top tokens are found.
-- Scheduled scanning every 10 minutes with file logging to `logs/app.log`.
-- No wallet connection and no transaction execution.
-
-## AI Intelligence Layer
-
-Each candidate token is analyzed using deterministic scoring rules across five
-market dimensions:
-
-- `liquidity_usd`
-- `volume_24h`
-- `fdv`
-- `price_change_24h`
-- `pair_created_at`
-
-The agent adds three AI fields to every token:
-
-- `alpha_score`: 0-100 signal for opportunity quality.
-- `risk_score`: 0-100 signal where higher means more risk.
-- `ai_summary`: product-readable explanation of momentum, liquidity, FDV, rug
-  risk, suspicious volume, and short-term speculation.
-
-Example AI Summary:
-
-```text
-Strong momentum detected | Healthy liquidity | Moderate FDV | Rug risk: LOW | Short-term speculative activity possible
-```
-
-## Dashboard Showcase
-
-The dashboard is designed as the primary competition demo surface:
-
-- Top token spotlight with alpha score, risk score, liquidity, volume, and 24h move.
-- KPI strip for token count, average alpha score, average risk score, and 24h volume.
-- Color-coded Alpha Score and Risk Score table.
-- AI Summary cards that translate raw metrics into a quick investment-research narrative.
-- Auto-refresh every 30 seconds while the scanner updates data in the background.
-
-Start it with:
-
-```bash
-streamlit run dashboard/streamlit_app.py
-```
-
-## Telegram Alert Showcase
-
-When Top tokens are detected, the Telegram notifier sends a compact alert with:
-
-- symbol
-- token name
-- 24h volume
-- liquidity
-- 24h price change
-- FDV
-- alpha score
-- risk score
-- AI Summary
-- DexScreener URL
-
-This makes the agent useful outside the dashboard, while keeping all actions
-read-only and human-reviewed.
+Alpha Hunter Market System is the top-level parent system. Market Intelligence,
+AI Workflow Engine, Memory Layer, Content Engine, Automation Layer, and Future
+AI Trading Agent are its direct subsystems. The system does not connect
+wallets, request private keys, sign transactions, execute swaps, or automate
+trading.
 
 ## System Architecture
 
 ```text
-                         +----------------------+
-                         |  DexScreener API     |
-                         |  Public market data  |
-                         +----------+-----------+
-                                    |
-                                    v
-+------------------+     +----------+-----------+     +----------------------+
-| schedule loop    | --> | DexScreener client   | --> | Token filter service |
-| every 10 minutes |     | src/api/             |     | src/services/        |
-+------------------+     +----------------------+     +----------+-----------+
-                                                               |
-                                                               v
-                                                    +----------+-----------+
-                                                    | AI Intelligence     |
-                                                    | src/ai/             |
-                                                    +----------+-----------+
-                                                               |
-                           +-----------------------------------+------------------+
-                           |                                   |                  |
-                           v                                   v                  v
-                 +---------+----------+              +---------+---------+  +-----+------+
-                 | data/alpha_tokens |              | Streamlit UI      |  | Telegram   |
-                 | CSV output        |              | dashboard/        |  | alerts     |
-                 +-------------------+              +-------------------+  +------------+
+Alpha Hunter Market System
+|
++-- Market Intelligence
+|
++-- AI Workflow Engine
+|   +-- ChatGPT + Codex
+|
++-- Memory Layer
+|   +-- Obsidian
+|
++-- Content Engine
+|   +-- X / Threads / Notes
+|
++-- Automation Layer
+|   +-- Bots / Scripts / Scheduling
+|
++-- Future AI Trading Agent
 ```
 
-## Technical Stack
+## Current Capabilities
 
-- Python 3.13
-- requests
-- pandas
-- schedule
-- logging
-- python-dotenv
-- Streamlit
-- Telegram Bot API
-- DexScreener public API
+- Multi-chain hot-token discovery from DexScreener public APIs.
+- Current chain support: Ethereum, Solana, and BSC.
+- Chain-specific market filters for liquidity, 24h volume, 24h price change, and FDV.
+- Unified token identity using `chain + contract_address` to avoid cross-chain symbol collisions.
+- SQLite scan history in `data/alpha_hunter.db`.
+- CSV output in `data/alpha_tokens.csv`.
+- Early Alpha Engine fields:
+  - `first_seen_at`
+  - `is_first_seen`
+  - `scan_count`
+  - `consecutive_up_count`
+  - `early_alpha_score`
+  - `early_alpha_reason`
+- Narrative, Smart Money, Risk Intelligence, Token Age, and Signal Calibration.
+- Telegram alerts for `CRITICAL`, `HIGH`, and `WATCH` signals.
+- Streamlit dashboard for live market intelligence with chain filtering.
+- Runtime manifest in `data/market_system_manifest.json`.
+- Signal transition events in SQLite `signal_events`.
+- Signal outcome tracking for 30m, 1h, and 4h follow-up windows.
+- Signal quality metrics in the runtime manifest and dashboard.
+- Repeated OLD-token WATCH suppression to reduce stale alert noise.
+- Daily brief markdown output in `memory/daily/`.
+- Obsidian-ready token, narrative, and signal-quality notes in `memory/`.
+- Content drafts in `content/x/` and `content/notes/`.
+- Memory and content directories for future Obsidian and publishing workflows.
 
-## Demo Flow
+## Subsystem Mapping
 
-1. Start the agent loop:
+| Subsystem | Current implementation |
+| --- | --- |
+| Market Intelligence | Narrative Detection, Signal Analysis, Research Reports |
+| AI Workflow Engine | ChatGPT + Codex workflow in `docs/ai_workflow_engine.md` |
+| Memory Layer | `memory/daily`, `memory/tokens`, `memory/narratives`, `memory/signals` |
+| Content Engine | `content/x`, `content/threads`, `content/notes` |
+| Automation Layer | `main.py`, PM2-friendly loop, Telegram, logs, manifest |
+| Future AI Trading Agent | Placeholder only; not implemented |
+
+## Repository Directory Map
+
+| Path | Subsystem relationship |
+| --- | --- |
+| `src/api`, `src/ai`, `src/services`, `src/storage` | Market Intelligence implementation |
+| `dashboard/` | Market Intelligence operator view |
+| `memory/` | Memory Layer artifacts for Obsidian-ready research |
+| `content/` | Content Engine drafts for X, Threads, and Notes |
+| `main.py`, `logs/`, `data/market_system_manifest.json` | Automation Layer runtime evidence |
+| `docs/ai_workflow_engine.md` | AI Workflow Engine operating model |
+| `labs/` | Experimental workspace, not a top-level subsystem |
+| Future AI Trading Agent | Future-only subsystem; no current runtime directory |
+
+## Running
+
+Install dependencies:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Run the Market Intelligence runtime:
 
 ```bash
 python main.py
 ```
 
-2. Open the dashboard in a second terminal:
+Run the dashboard:
 
 ```bash
 streamlit run dashboard/streamlit_app.py
 ```
 
-3. Show the Top Token spotlight and explain that raw market data is transformed
-   into ranked, scored candidates.
+Outputs:
 
-4. Open the AI Summary cards and explain how the agent flags strong momentum,
-   low liquidity, suspicious volume, rug risk, and speculative activity.
-
-5. Show the Telegram alert as the off-dashboard notification channel.
-
-Detailed demo notes are available in [docs/demo_script.md](docs/demo_script.md).
-Architecture notes are available in [docs/architecture.md](docs/architecture.md).
-
-## Installation
-
-```bash
-python3.13 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+- `data/alpha_tokens.csv`
+- `data/alpha_hunter.db`
+- `data/market_system_manifest.json`
+- `logs/app.log`
+- Telegram alerts when configured
 
 ## Configuration
 
@@ -166,44 +129,60 @@ Set Telegram configuration:
 TELEGRAM_ENABLED=true
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+TELEGRAM_HEALTHCHECK_ENABLED=true
+TELEGRAM_HEALTHCHECK_INTERVAL_HOURS=6
+TELEGRAM_REPORTS_ENABLED=true
+REPORT_TIMEZONE=Asia/Shanghai
+DAILY_REPORT_HOUR=21
+WEEKLY_REPORT_WEEKDAY=6
+WEEKLY_REPORT_HOUR=21
 AUTO_TRADING_ENABLED=false
 ```
 
-`AUTO_TRADING_ENABLED` is intentionally disabled by default. Alpha Hunter Agent
-does not connect wallets, does not request private keys, and does not execute
-transactions.
+When scans are healthy but no new signal event passes deduplication, Telegram
+can send a quiet health check at the configured interval. This confirms the
+system is still running without reintroducing repeated OLD token alert noise.
 
-## Running
+Daily and weekly Telegram reports summarize the scan history so operators do
+not need to review every intraday signal manually. By default, the daily report
+is sent after 21:00 Asia/Shanghai and the weekly report is sent after 21:00 on
+Sunday. These reports do not automatically sync to Obsidian.
 
-Run the scanner:
+`AUTO_TRADING_ENABLED` remains disabled. The Future AI Trading Agent is not
+implemented in this codebase.
 
-```bash
-python main.py
-```
+Multi-chain settings live in `config.py`:
 
-Run the dashboard:
+- `SUPPORTED_CHAINS = ["ethereum", "solana", "bsc"]`
+- `CHAIN_FILTERS` defines per-chain liquidity, volume, FDV, and price-change thresholds.
 
-```bash
-streamlit run dashboard/streamlit_app.py
-```
+## v1.2 Direction
 
-Outputs:
+The current v1.2 architecture milestone starts Signal Memory and Daily Brief:
 
-- CSV: `data/alpha_tokens.csv`
-- Logs: `logs/app.log`
-- Telegram: configured chat ID when enabled
+- reduce repeated WATCH alerts by pushing only new signals and upgrades
+- record signal transition events in SQLite
+- evaluate 30m, 1h, and 4h signal outcomes
+- generate daily markdown reports in `memory/daily/`
+- send daily and weekly Telegram reports for operator review
+- build token and narrative memory for Obsidian/RAG workflows
+- prepare reusable content drafts in `content/`
 
-## Risk Statement
+Current architecture readiness is summarized in
+[docs/system_readiness_report.md](docs/system_readiness_report.md).
 
-Alpha Hunter Agent is a research and notification tool. It uses public market
-data and heuristic scoring, which can be incomplete, delayed, or misleading.
-Scores and summaries are not financial advice. Users should verify token
-contracts, liquidity, holders, project credibility, and exchange conditions
-before making any decision.
+## Safety Statement
 
-The agent is intentionally read-only:
+Alpha Hunter Market System is a research and notification system. Scores,
+alerts, and summaries are not financial advice. Public market data can be
+delayed, incomplete, or misleading.
 
-- It does not connect to wallets.
-- It does not sign messages.
-- It does not execute swaps.
-- It does not automate trading.
+Current safety boundaries:
+
+- no wallet connection
+- no private keys
+- no message signing
+- no transaction submission
+- no swaps
+- no automated trading
+- no buy/sell recommendations

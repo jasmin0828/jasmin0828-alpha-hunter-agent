@@ -1,4 +1,4 @@
-"""Minimal SQLite storage patch for Alpha Hunter Agent v1.0.
+"""SQLite storage for Alpha Hunter Market System.
 
 Uses only Python's standard-library sqlite3 module. Each scan creates one
 scan_runs row and appends token_snapshots rows without overwriting history.
@@ -47,9 +47,12 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS token_snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     scan_run_id INTEGER NOT NULL,
+                    chain TEXT DEFAULT 'unknown',
                     symbol TEXT,
+                    token_symbol TEXT,
                     token_name TEXT,
                     token_address TEXT,
+                    contract_address TEXT,
                     price_usd REAL,
                     liquidity_usd REAL,
                     volume_24h REAL,
@@ -62,6 +65,7 @@ class SQLiteStore:
                     ai_summary TEXT,
                     dex TEXT,
                     url TEXT,
+                    pair_url TEXT,
                     score_change_10m REAL DEFAULT 0,
                     score_change_30m REAL DEFAULT 0,
                     volume_change_10m REAL DEFAULT 0,
@@ -112,7 +116,43 @@ class SQLiteStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS signal_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scan_run_id INTEGER NOT NULL,
+                    token_snapshot_id INTEGER NOT NULL,
+                    chain TEXT DEFAULT 'unknown',
+                    token_address TEXT,
+                    symbol TEXT,
+                    token_name TEXT,
+                    previous_alert_level TEXT DEFAULT 'IGNORE',
+                    alert_level TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    early_alpha_score REAL DEFAULT 0,
+                    agent_score REAL DEFAULT 0,
+                    price_usd REAL,
+                    volume_24h REAL,
+                    liquidity_usd REAL,
+                    token_age_bucket TEXT,
+                    rug_risk_level TEXT,
+                    consecutive_up_count INTEGER DEFAULT 0,
+                    early_alpha_reason TEXT DEFAULT '',
+                    alert_reason TEXT DEFAULT '',
+                    outcome_30m_price_change REAL,
+                    outcome_1h_price_change REAL,
+                    outcome_4h_price_change REAL,
+                    outcome_1h_volume_change REAL,
+                    outcome_1h_early_alpha_change REAL,
+                    outcome_status TEXT DEFAULT 'PENDING',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (scan_run_id) REFERENCES scan_runs(id),
+                    FOREIGN KEY (token_snapshot_id) REFERENCES token_snapshots(id)
+                )
+                """
+            )
             self._ensure_trend_columns(conn)
+            self._ensure_signal_event_columns(conn)
         self.logger.info("Initialized SQLite database at %s", self.db_path)
 
     def _ensure_trend_columns(self, conn: sqlite3.Connection) -> None:
@@ -122,6 +162,10 @@ class SQLiteStore:
             for row in conn.execute("PRAGMA table_info(token_snapshots)").fetchall()
         }
         migrations = {
+            "chain": "TEXT DEFAULT 'unknown'",
+            "token_symbol": "TEXT",
+            "contract_address": "TEXT",
+            "pair_url": "TEXT",
             "score_change_10m": "REAL DEFAULT 0",
             "score_change_30m": "REAL DEFAULT 0",
             "volume_change_10m": "REAL DEFAULT 0",
@@ -158,6 +202,25 @@ class SQLiteStore:
             if column not in columns:
                 conn.execute(f"ALTER TABLE token_snapshots ADD COLUMN {column} {definition}")
 
+    def _ensure_signal_event_columns(self, conn: sqlite3.Connection) -> None:
+        """Add v1.2 Signal Memory outcome columns when upgrading an existing database."""
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(signal_events)").fetchall()
+        }
+        migrations = {
+            "chain": "TEXT DEFAULT 'unknown'",
+            "outcome_30m_price_change": "REAL",
+            "outcome_1h_price_change": "REAL",
+            "outcome_4h_price_change": "REAL",
+            "outcome_1h_volume_change": "REAL",
+            "outcome_1h_early_alpha_change": "REAL",
+            "outcome_status": "TEXT DEFAULT 'PENDING'",
+        }
+        for column, definition in migrations.items():
+            if column not in columns:
+                conn.execute(f"ALTER TABLE signal_events ADD COLUMN {column} {definition}")
+
     def create_scan_run(self) -> int:
         """Create a scan_runs record and return its id."""
         started_at = self._now()
@@ -179,10 +242,12 @@ class SQLiteStore:
             conn.executemany(
                 """
                 INSERT INTO token_snapshots (
-                    scan_run_id, symbol, token_name, token_address, price_usd,
+                    scan_run_id, chain, symbol, token_symbol, token_name, token_address,
+                    contract_address, price_usd,
                     liquidity_usd, volume_24h, price_change_24h, fdv, market_cap,
-                    pair_created_at, alpha_score, risk_score, ai_summary, dex, url, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pair_created_at, alpha_score, risk_score, ai_summary, dex, url,
+                    pair_url, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -420,13 +485,156 @@ class SQLiteStore:
                 params=(latest_scan,),
             )
 
+    def create_signal_events(self, scan_run_id: int, snapshots: pd.DataFrame) -> pd.DataFrame:
+        """Create durable events only for first alerts or alert-level upgrades."""
+        if snapshots.empty or "alert_level" not in snapshots.columns:
+            return pd.DataFrame()
+
+        candidates = snapshots[snapshots["alert_level"].isin(["CRITICAL", "HIGH", "WATCH"])].copy()
+        if candidates.empty:
+            return candidates.head(0)
+
+        events: list[dict[str, Any]] = []
+        with sqlite3.connect(self.db_path) as conn:
+            for _, token in candidates.iterrows():
+                previous_level = self._previous_alert_level(
+                    conn,
+                    self._chain_value(token),
+                    str(token.get("token_address") or ""),
+                    scan_run_id,
+                )
+                event_type = self._signal_event_type(previous_level, str(token.get("alert_level") or "IGNORE"))
+                if event_type is None:
+                    continue
+                events.append(self._signal_event_row(scan_run_id, token, previous_level, event_type))
+
+            if events:
+                conn.executemany(
+                    """
+                    INSERT INTO signal_events (
+                        scan_run_id, token_snapshot_id, chain, token_address, symbol, token_name,
+                        previous_alert_level, alert_level, event_type, early_alpha_score,
+                        agent_score, price_usd, volume_24h, liquidity_usd, token_age_bucket,
+                        rug_risk_level, consecutive_up_count, early_alpha_reason,
+                        alert_reason, created_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    [
+                        (
+                            event["scan_run_id"],
+                            event["token_snapshot_id"],
+                            event["chain"],
+                            event["token_address"],
+                            event["symbol"],
+                            event["token_name"],
+                            event["previous_alert_level"],
+                            event["alert_level"],
+                            event["event_type"],
+                            event["early_alpha_score"],
+                            event["agent_score"],
+                            event["price_usd"],
+                            event["volume_24h"],
+                            event["liquidity_usd"],
+                            event["token_age_bucket"],
+                            event["rug_risk_level"],
+                            event["consecutive_up_count"],
+                            event["early_alpha_reason"],
+                            event["alert_reason"],
+                            event["created_at"],
+                        )
+                        for event in events
+                    ],
+                )
+
+        if not events:
+            return candidates.head(0)
+        event_df = pd.DataFrame(events)
+        self.logger.info("Created %s signal events", len(event_df))
+        return event_df
+
+    def load_latest_signal_events(self, limit: int = 100) -> pd.DataFrame:
+        """Load recent signal transition events for dashboard and audit views."""
+        if not self.db_path.exists():
+            return pd.DataFrame()
+        with sqlite3.connect(self.db_path) as conn:
+            return pd.read_sql_query(
+                """
+                SELECT *
+                FROM signal_events
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                conn,
+                params=(limit,),
+            )
+
+    def update_signal_event_outcomes(self) -> int:
+        """Update signal events with 30m, 1h, and 4h follow-up outcomes when available."""
+        if not self.db_path.exists():
+            return 0
+
+        with sqlite3.connect(self.db_path) as conn:
+            events = pd.read_sql_query(
+                """
+                SELECT *
+                FROM signal_events
+                WHERE outcome_status = 'PENDING'
+                ORDER BY created_at ASC, id ASC
+                """,
+                conn,
+            )
+            if events.empty:
+                return 0
+
+            snapshots = pd.read_sql_query(
+                """
+                SELECT chain, token_address, created_at, price_usd, volume_24h, early_alpha_score
+                FROM token_snapshots
+                WHERE COALESCE(chain, 'unknown') || ':' || token_address IN (
+                    SELECT DISTINCT COALESCE(chain, 'unknown') || ':' || token_address
+                    FROM signal_events
+                    WHERE outcome_status = 'PENDING'
+                )
+                ORDER BY chain ASC, token_address ASC, created_at ASC, id ASC
+                """,
+                conn,
+            )
+            if snapshots.empty:
+                return 0
+
+            outcome_rows = self._calculate_signal_outcomes(events, snapshots)
+            if not outcome_rows:
+                return 0
+
+            conn.executemany(
+                """
+                UPDATE signal_events
+                SET outcome_30m_price_change = ?,
+                    outcome_1h_price_change = ?,
+                    outcome_4h_price_change = ?,
+                    outcome_1h_volume_change = ?,
+                    outcome_1h_early_alpha_change = ?,
+                    outcome_status = ?
+                WHERE id = ?
+                """,
+                outcome_rows,
+            )
+
+        self.logger.info("Updated %s signal event outcomes", len(outcome_rows))
+        return len(outcome_rows)
+
     def _row_values(self, scan_run_id: int, row: pd.Series, created_at: str) -> tuple[Any, ...]:
         """Convert a token dataframe row into SQLite insert values."""
         return (
             scan_run_id,
+            self._chain_value(row),
             self._value(row, "symbol"),
+            self._value(row, "token_symbol") or self._value(row, "symbol"),
             self._value(row, "token_name"),
             self._value(row, "token_address"),
+            self._value(row, "contract_address") or self._value(row, "token_address"),
             self._number(row, "price_usd"),
             self._number(row, "liquidity_usd"),
             self._number(row, "volume_24h"),
@@ -439,6 +647,7 @@ class SQLiteStore:
             self._value(row, "ai_summary"),
             self._value(row, "dex"),
             self._value(row, "url"),
+            self._value(row, "pair_url") or self._value(row, "url"),
             created_at,
         )
 
@@ -448,6 +657,17 @@ class SQLiteStore:
         if pd.isna(value):
             return ""
         return str(value)
+
+    def _chain_value(self, row: pd.Series) -> str:
+        """Return the normalized chain field for multi-chain token identity."""
+        return self._normalize_chain(row.get("chain"))
+
+    def _normalize_chain(self, value: object) -> str:
+        """Normalize nullable chain values for SQLite identity comparisons."""
+        if pd.isna(value):
+            return "unknown"
+        normalized = str(value or "").strip().lower()
+        return normalized or "unknown"
 
     def _number(self, row: pd.Series, key: str) -> float | None:
         """Return a numeric value or None when missing."""
@@ -465,6 +685,156 @@ class SQLiteStore:
         if isinstance(value, bool):
             return int(value)
         return value
+
+    def _previous_alert_level(
+        self,
+        conn: sqlite3.Connection,
+        chain: str,
+        token_address: str,
+        scan_run_id: int,
+    ) -> str:
+        """Return the latest prior alert level for this token before the current scan."""
+        if not token_address:
+            return "IGNORE"
+        row = conn.execute(
+            """
+            SELECT alert_level
+            FROM token_snapshots
+            WHERE COALESCE(chain, 'unknown') = ?
+              AND token_address = ?
+              AND scan_run_id < ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (self._normalize_chain(chain), token_address, scan_run_id),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return "IGNORE"
+        return str(row[0])
+
+    def _signal_event_type(self, previous_level: str, current_level: str) -> str | None:
+        """Return event type for first alerts and upgrades; suppress repeated noise."""
+        rank = {"IGNORE": 0, "WATCH": 1, "HIGH": 2, "CRITICAL": 3}
+        previous_rank = rank.get(previous_level, 0)
+        current_rank = rank.get(current_level, 0)
+        if current_rank <= 0:
+            return None
+        if previous_rank <= 0:
+            return "NEW_SIGNAL"
+        if current_rank > previous_rank:
+            return "UPGRADE"
+        return None
+
+    def _signal_event_row(
+        self,
+        scan_run_id: int,
+        token: pd.Series,
+        previous_alert_level: str,
+        event_type: str,
+    ) -> dict[str, Any]:
+        """Convert one snapshot into a signal event row."""
+        return {
+            "scan_run_id": scan_run_id,
+            "token_snapshot_id": int(token.get("id") or 0),
+            "chain": self._chain_value(token),
+            "token_address": self._value(token, "token_address"),
+            "symbol": self._value(token, "symbol"),
+            "token_name": self._value(token, "token_name"),
+            "previous_alert_level": previous_alert_level,
+            "alert_level": self._value(token, "alert_level") or "IGNORE",
+            "event_type": event_type,
+            "early_alpha_score": self._number(token, "early_alpha_score") or 0,
+            "agent_score": self._number(token, "agent_score") or 0,
+            "price_usd": self._number(token, "price_usd"),
+            "volume_24h": self._number(token, "volume_24h"),
+            "liquidity_usd": self._number(token, "liquidity_usd"),
+            "token_age_bucket": self._value(token, "token_age_bucket"),
+            "rug_risk_level": self._value(token, "rug_risk_level"),
+            "consecutive_up_count": int(token.get("consecutive_up_count") or 0),
+            "early_alpha_reason": self._value(token, "early_alpha_reason"),
+            "alert_reason": self._value(token, "alert_reason"),
+            "created_at": self._value(token, "created_at") or self._now(),
+        }
+
+    def _calculate_signal_outcomes(self, events: pd.DataFrame, snapshots: pd.DataFrame) -> list[tuple[Any, ...]]:
+        """Return SQLite update rows for events with enough follow-up data."""
+        events = events.copy()
+        snapshots = snapshots.copy()
+        events["created_at"] = pd.to_datetime(events["created_at"], errors="coerce", utc=True)
+        snapshots["created_at"] = pd.to_datetime(snapshots["created_at"], errors="coerce", utc=True)
+        snapshots["price_usd"] = pd.to_numeric(snapshots["price_usd"], errors="coerce")
+        snapshots["volume_24h"] = pd.to_numeric(snapshots["volume_24h"], errors="coerce")
+        snapshots["early_alpha_score"] = pd.to_numeric(snapshots["early_alpha_score"], errors="coerce")
+
+        rows: list[tuple[Any, ...]] = []
+        grouped_snapshots = {
+            (self._normalize_chain(chain), token_address): group.sort_values("created_at")
+            for (chain, token_address), group in snapshots.groupby(["chain", "token_address"], dropna=False)
+        }
+
+        for _, event in events.iterrows():
+            event_time = event.get("created_at")
+            chain = self._normalize_chain(event.get("chain"))
+            token_address = event.get("token_address")
+            history = grouped_snapshots.get((chain, token_address))
+            if history is None or history.empty or pd.isna(event_time):
+                continue
+
+            base_price = float(event.get("price_usd") or 0)
+            base_volume = float(event.get("volume_24h") or 0)
+            base_early_alpha = float(event.get("early_alpha_score") or 0)
+            follow_30m = self._first_snapshot_after(history, event_time, 30)
+            follow_1h = self._first_snapshot_after(history, event_time, 60)
+            follow_4h = self._first_snapshot_after(history, event_time, 240)
+
+            if follow_30m is None and follow_1h is None and follow_4h is None:
+                continue
+
+            price_30m = self._pct_change_from_row(base_price, follow_30m, "price_usd")
+            price_1h = self._pct_change_from_row(base_price, follow_1h, "price_usd")
+            price_4h = self._pct_change_from_row(base_price, follow_4h, "price_usd")
+            volume_1h = self._pct_change_from_row(base_volume, follow_1h, "volume_24h")
+            early_alpha_1h = self._change_from_row(base_early_alpha, follow_1h, "early_alpha_score")
+            status = "COMPLETE" if follow_4h is not None else "PARTIAL"
+
+            rows.append(
+                (
+                    price_30m,
+                    price_1h,
+                    price_4h,
+                    volume_1h,
+                    early_alpha_1h,
+                    status,
+                    int(event["id"]),
+                )
+            )
+        return rows
+
+    def _first_snapshot_after(self, history: pd.DataFrame, event_time: pd.Timestamp, minutes: int) -> pd.Series | None:
+        """Find the first snapshot at or after an event follow-up horizon."""
+        cutoff = event_time + pd.Timedelta(minutes=minutes)
+        candidates = history[history["created_at"] >= cutoff]
+        if candidates.empty:
+            return None
+        return candidates.iloc[0]
+
+    def _pct_change_from_row(self, base: float, row: pd.Series | None, column: str) -> float | None:
+        """Return percentage change from event value to a follow-up row."""
+        if row is None or base == 0:
+            return None
+        value = row.get(column)
+        if pd.isna(value):
+            return None
+        return round(((float(value) - base) / base) * 100, 2)
+
+    def _change_from_row(self, base: float, row: pd.Series | None, column: str) -> float | None:
+        """Return absolute change from event value to a follow-up row."""
+        if row is None:
+            return None
+        value = row.get(column)
+        if pd.isna(value):
+            return None
+        return round(float(value) - base, 2)
 
     def _now(self) -> str:
         """Return current UTC time as ISO text."""

@@ -1,6 +1,9 @@
-"""Competition dashboard for Alpha Hunter Agent v1.1."""
+"""Dashboard for Alpha Hunter Market System."""
 
 import html
+import json
+import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -13,12 +16,24 @@ REFRESH_INTERVAL = "30s"
 
 # The dashboard lives in dashboard/, so the project root is one level above it.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# Alpha Hunter Agent writes scanner output to this CSV file.
+from src.agents.alpha_hunter_core import AlphaHunterCore
+from src.agents.daily_alpha_report_agent import DailyAlphaReportAgent
+from src.agents.memory_agent import MemoryAgent
+from src.agents.social_signal_agent import SocialSignalAgent
+from src.agents.theme_scanner_agent import ThemeScannerAgent
+
+# Market System runtime writes token output to this CSV file.
 DATA_FILE = PROJECT_ROOT / "data" / "alpha_tokens.csv"
+MANIFEST_FILE = PROJECT_ROOT / "data" / "market_system_manifest.json"
+DB_FILE = PROJECT_ROOT / "data" / "alpha_hunter.db"
+SOCIAL_SIGNALS_SAMPLE_FILE = PROJECT_ROOT / "data" / "social_signals_sample.json"
 
 # These are the fields used by the competition dashboard table.
 DISPLAY_COLUMNS = [
+    "chain",
     "symbol",
     "token_name",
     "price_usd",
@@ -66,7 +81,7 @@ DISPLAY_COLUMNS = [
 def configure_page() -> None:
     """Configure Streamlit page metadata and visual styling."""
     st.set_page_config(
-        page_title="Alpha Hunter Agent",
+        page_title="Alpha Hunter Market System",
         page_icon="AH",
         layout="wide",
         initial_sidebar_state="collapsed",
@@ -231,17 +246,18 @@ def configure_page() -> None:
 
 @st.cache_data(ttl=25)
 def load_alpha_tokens(csv_path: Path) -> pd.DataFrame:
-    """Load Alpha Hunter token data from the scanner CSV file."""
+    """Load Market Intelligence token data from the runtime CSV file."""
     if not csv_path.exists():
         return pd.DataFrame(columns=DISPLAY_COLUMNS)
 
     # Read the CSV once per cache window so the UI remains responsive.
     df = pd.read_csv(csv_path)
 
-    # Ensure the required table columns exist even if the scanner output changes.
+    # Ensure the required table columns exist even if runtime output changes.
     for column in DISPLAY_COLUMNS:
         if column not in df.columns:
             df[column] = pd.NA
+    df["chain"] = df["chain"].fillna("unknown").astype(str).str.lower()
 
     # Convert numeric columns for metrics, sorting, and formatting.
     numeric_columns = [
@@ -283,6 +299,15 @@ def load_alpha_tokens(csv_path: Path) -> pd.DataFrame:
     return df[DISPLAY_COLUMNS].copy()
 
 
+def filter_tokens_by_chain(df: pd.DataFrame, selected_chain: str) -> pd.DataFrame:
+    """Return a chain-filtered token frame for dashboard views."""
+    if df.empty or selected_chain == "All":
+        return df
+    if "chain" not in df.columns:
+        return df.head(0)
+    return df[df["chain"].astype(str).str.lower() == selected_chain.lower()].copy()
+
+
 def get_data_updated_at(csv_path: Path) -> str:
     """Return the local file update time for the displayed data."""
     if not csv_path.exists():
@@ -290,6 +315,141 @@ def get_data_updated_at(csv_path: Path) -> str:
 
     updated_at = datetime.fromtimestamp(csv_path.stat().st_mtime)
     return updated_at.strftime("%Y-%m-%d %H:%M:%S")
+
+
+@st.cache_data(ttl=25)
+def load_market_system_manifest(manifest_path: Path) -> dict:
+    """Load latest Market System manifest when available."""
+    if not manifest_path.exists():
+        return {}
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=25)
+def load_signal_events(db_path: Path) -> pd.DataFrame:
+    """Load recent signal transition events for audit panels."""
+    if not db_path.exists():
+        return pd.DataFrame()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            return pd.read_sql_query(
+                """
+                SELECT *
+                FROM signal_events
+                ORDER BY created_at DESC, id DESC
+                LIMIT 100
+                """,
+                conn,
+            )
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=25)
+def build_core_run_preview() -> dict:
+    """Run a dry Core preview without writing reports, memory, or database state."""
+    try:
+        return {
+            "ok": True,
+            "result": AlphaHunterCore(project_root=PROJECT_ROOT).run_pipeline(
+                social_signals_path=SOCIAL_SIGNALS_SAMPLE_FILE,
+                archive_to_memory=False,
+                dry_run=True,
+            ),
+            "error": "",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "result": {},
+            "error": str(exc),
+        }
+
+
+@st.cache_data(ttl=25)
+def build_theme_scanner_results(tokens: pd.DataFrame) -> pd.DataFrame:
+    """Run Theme Scanner Agent on the latest dashboard token frame."""
+    if tokens.empty:
+        return pd.DataFrame(
+            columns=[
+                "theme_name",
+                "signal_strength",
+                "description",
+                "related_tokens",
+                "reason",
+                "detected_at",
+                "source",
+            ]
+        )
+
+    results = ThemeScannerAgent().scan_as_dicts(tokens)
+    if not results:
+        return pd.DataFrame(
+            columns=[
+                "theme_name",
+                "signal_strength",
+                "description",
+                "related_tokens",
+                "reason",
+                "detected_at",
+                "source",
+            ]
+        )
+
+    frame = pd.DataFrame(results)
+    frame["theme_name"] = frame["theme_name"].replace({"Unknown": "Unclassified Theme"})
+    frame["related_tokens"] = frame["related_tokens"].apply(
+        lambda tokens: ", ".join(tokens) if isinstance(tokens, list) else str(tokens)
+    )
+    frame["signal_strength"] = pd.to_numeric(frame["signal_strength"], errors="coerce").fillna(0)
+    return frame[
+        [
+            "theme_name",
+            "signal_strength",
+            "description",
+            "related_tokens",
+            "reason",
+            "detected_at",
+            "source",
+        ]
+    ].sort_values("signal_strength", ascending=False)
+
+
+@st.cache_data(ttl=25)
+def load_social_signal_inputs(json_path: Path) -> list[dict]:
+    """Load optional manual social signals for dashboard report preview."""
+    if not json_path.exists():
+        return []
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+@st.cache_data(ttl=25)
+def build_daily_alpha_report(tokens: pd.DataFrame) -> dict:
+    """Build a Daily Alpha Report preview from latest dashboard token data."""
+    if tokens.empty:
+        return {}
+
+    themes = ThemeScannerAgent().scan_as_dicts(tokens)
+    social_inputs = load_social_signal_inputs(SOCIAL_SIGNALS_SAMPLE_FILE)
+    social_signals = (
+        SocialSignalAgent().analyze_as_dicts(social_inputs, tokens, themes)
+        if social_inputs
+        else []
+    )
+    return DailyAlphaReportAgent().build_report_dict(tokens, themes, social_signals=social_signals)
+
+
+@st.cache_data(ttl=25)
+def build_memory_summary(limit: int = 7) -> list[dict]:
+    """Read recent Daily Alpha Report memory records without writing memory state."""
+    return MemoryAgent(project_root=PROJECT_ROOT).list_recent_reports(limit=limit)
 
 
 def format_compact_usd(value: float) -> str:
@@ -327,7 +487,8 @@ def score_color(value: float, score_type: str) -> str:
 def highlight_top_token(row: pd.Series, top_symbol: str | None) -> list[str]:
     """Highlight the top token row in the data table."""
     styles = []
-    is_top = bool(top_symbol and row.get("symbol") == top_symbol)
+    row_key = f"{str(row.get('chain', 'unknown')).lower()}:{row.get('symbol')}"
+    is_top = bool(top_symbol and row_key == top_symbol)
 
     for column, value in row.items():
         style = ""
@@ -347,25 +508,559 @@ def render_header(updated_at: str) -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <h1>Alpha Hunter Agent v1.1</h1>
-            <p>AI market-intelligence agent for Solana token discovery · Built for OKX Agentic Wallet showcase · Data updated at {updated_at}</p>
+            <h1>Alpha Hunter Market System</h1>
+            <p>Market Intelligence · AI Workflow · Memory · Content · Automation · Data updated at {updated_at}</p>
             <div class="hero-badges">
-                <span class="badge">Read-only agent</span>
+                <span class="badge">Read-only system</span>
+                <span class="badge">Multi-chain</span>
+                <span class="badge">Ethereum · Solana · BSC</span>
                 <span class="badge">AI risk analysis</span>
                 <span class="badge">Telegram alerts</span>
                 <span class="badge">Auto refresh 30s</span>
                 <span class="badge">No wallet connection</span>
+                <span class="badge">Market Intelligence</span>
+                <span class="badge">Narrative Detection</span>
+                <span class="badge">Signal Analysis</span>
+                <span class="badge">Research Reports</span>
                 <span class="badge">Momentum engine</span>
-                <span class="badge">Narrative Engine</span>
                 <span class="badge">Smart Money Intelligence</span>
                 <span class="badge">Risk Intelligence</span>
                 <span class="badge">Token Age Intelligence</span>
                 <span class="badge">Signal Calibration</span>
                 <span class="badge">Early Alpha Engine</span>
+                <span class="badge">AI Workflow Engine</span>
+                <span class="badge">Memory Layer</span>
+                <span class="badge">Content Engine</span>
+                <span class="badge">Automation Layer</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def render_market_system_manifest(manifest: dict) -> None:
+    """Render compact Market System runtime status."""
+    if not manifest:
+        return
+
+    summary = manifest.get("scan_summary", {})
+    quality = manifest.get("signal_quality", {})
+    col_scan, col_alerts, col_events, col_first, col_momentum, col_score = st.columns(6)
+    col_scan.metric("Scan Run", manifest.get("scan_run_id", "-"))
+    col_alerts.metric("Signal Alerts", summary.get("alert_count", 0))
+    col_events.metric("Signal Events", summary.get("signal_event_count", 0))
+    col_first.metric("First Seen", summary.get("first_seen_count", 0))
+    col_momentum.metric("Momentum", summary.get("consecutive_momentum_count", 0))
+    col_score.metric("Max Early Alpha", f"{float(summary.get('max_early_alpha_score', 0)):.2f}")
+
+    q_watch, q_old, q_repeat, q_avg = st.columns(4)
+    q_watch.metric("WATCH", quality.get("watch_count", 0))
+    q_old.metric("OLD WATCH", quality.get("old_watch_count", 0))
+    q_repeat.metric("Repeated WATCH", quality.get("repeated_watch_count", 0))
+    q_avg.metric("Avg Alert Early Alpha", f"{float(quality.get('avg_early_alpha_alert_score', 0)):.2f}")
+
+    event_count = int(summary.get("signal_event_count", 0) or 0)
+    if event_count == 0:
+        st.caption("Telegram quiet: no new signal transition events in the latest scan.")
+
+
+def render_latest_scan_snapshot(df: pd.DataFrame, manifest: dict) -> None:
+    """Render the latest Market Intelligence state even when no Telegram event is emitted."""
+    if df.empty:
+        return
+
+    st.markdown('<div class="section-title">Latest Scan Snapshot</div>', unsafe_allow_html=True)
+    summary = manifest.get("scan_summary", {}) if manifest else {}
+    col_tokens, col_alerts, col_ignored, col_updated = st.columns(4)
+    col_tokens.metric("Candidates", len(df))
+    col_alerts.metric("Current Alerts", int((df["alert_level"] != "IGNORE").sum()))
+    col_ignored.metric("Ignored", int((df["alert_level"] == "IGNORE").sum()))
+    col_updated.metric("Scan Run", manifest.get("scan_run_id", "-") if manifest else "-")
+
+    snapshot_columns = [
+        "chain",
+        "symbol",
+        "token_name",
+        "alert_level",
+        "early_alpha_score",
+        "early_alpha_reason",
+        "scan_count",
+        "consecutive_up_count",
+        "token_age_bucket",
+        "rug_risk_level",
+        "volume_24h",
+        "price_change_24h",
+    ]
+    available_columns = [column for column in snapshot_columns if column in df.columns]
+    current_alerts = df[df["alert_level"] != "IGNORE"].sort_values(
+        ["early_alpha_score", "agent_score"],
+        ascending=[False, False],
+    )
+    if current_alerts.empty:
+        st.info("No active WATCH / HIGH / CRITICAL tokens in the latest scan.")
+    else:
+        st.markdown('<div class="section-title">Current Alert Pool</div>', unsafe_allow_html=True)
+        st.dataframe(current_alerts[available_columns], width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">Current Candidate Pool</div>', unsafe_allow_html=True)
+    st.dataframe(
+        df.sort_values(["early_alpha_score", "volume_24h"], ascending=[False, False])[available_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    if summary:
+        distributions = {
+            "Alert Levels": summary.get("alert_distribution", {}),
+            "Age Buckets": summary.get("age_distribution", {}),
+            "Narratives": summary.get("narrative_distribution", {}),
+        }
+        distribution_rows = []
+        for group, values in distributions.items():
+            for name, count in values.items():
+                distribution_rows.append({"group": group, "name": name, "count": count})
+        if distribution_rows:
+            st.markdown('<div class="section-title">Latest Scan Distribution</div>', unsafe_allow_html=True)
+            st.dataframe(pd.DataFrame(distribution_rows), width="stretch", hide_index=True)
+
+
+def render_theme_scanner_section(df: pd.DataFrame) -> None:
+    """Render Theme Scanner Agent output without changing runtime flow."""
+    st.markdown('<div class="section-title">Theme Scanner Agent</div>', unsafe_allow_html=True)
+
+    themes = build_theme_scanner_results(df)
+    if themes.empty:
+        st.info("Theme Scanner has no results yet. Run the Market Intelligence scanner to populate token data.")
+        return
+
+    top_theme = themes.iloc[0]
+    col_theme, col_strength, col_count = st.columns(3)
+    col_theme.metric("Top Theme", str(top_theme.get("theme_name", "N/A")))
+    col_strength.metric("Signal Strength", f"{float(top_theme.get('signal_strength', 0)):.2f}")
+    col_count.metric("Theme Count", len(themes))
+
+    st.dataframe(
+        themes,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "theme_name": st.column_config.TextColumn("Theme"),
+            "signal_strength": st.column_config.ProgressColumn(
+                "Signal Strength",
+                min_value=0,
+                max_value=100,
+                format="%.2f",
+            ),
+            "description": st.column_config.TextColumn("Description"),
+            "related_tokens": st.column_config.TextColumn("Related Tokens"),
+            "reason": st.column_config.TextColumn("Reason"),
+            "detected_at": st.column_config.TextColumn("Detected At"),
+            "source": st.column_config.TextColumn("Source"),
+        },
+    )
+
+
+def _records_frame(records: list[dict], columns: list[str]) -> pd.DataFrame:
+    """Return a stable dataframe for report preview tables."""
+    if not records:
+        return pd.DataFrame(columns=columns)
+    frame = pd.DataFrame(records)
+    for column in columns:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    return frame[columns]
+
+
+def _stringify_list_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Render list-valued report fields as comma-separated strings for Streamlit tables."""
+    for column in columns:
+        if column in frame.columns:
+            frame[column] = frame[column].apply(
+                lambda value: ", ".join(str(item) for item in value)
+                if isinstance(value, list)
+                else str(value or "")
+            )
+    return frame
+
+
+def render_core_run_preview_section() -> None:
+    """Render a read-only Alpha Hunter Core pipeline preview."""
+    st.markdown('<div class="section-title">Core Run Preview</div>', unsafe_allow_html=True)
+
+    preview = build_core_run_preview()
+    if not preview.get("ok"):
+        st.error(f"Core Run Preview could not run: {preview.get('error') or 'unknown error'}")
+        return
+
+    result = preview.get("result", {})
+    if not result:
+        st.info("Core Run Preview has no result yet.")
+        return
+
+    st.caption(f"Run at: {result.get('run_at', 'N/A')}")
+    col_tokens, col_themes, col_social, col_evidence = st.columns(4)
+    col_tokens.metric("Tokens", result.get("token_count", 0))
+    col_themes.metric("Themes", result.get("theme_count", 0))
+    col_social.metric("Social Signals", result.get("social_signal_count", 0))
+    col_evidence.metric("Evidence Grades", result.get("evidence_grade_count", 0))
+
+    col_theme, col_social_signal = st.columns(2)
+    col_theme.metric("Top Theme", result.get("top_theme", "none"))
+    col_social_signal.metric("Top Social Signal", result.get("top_social_signal", "none"))
+
+    top_evidence = result.get("top_evidence", {})
+    st.markdown('<div class="section-title">Core Top Evidence</div>', unsafe_allow_html=True)
+    if top_evidence:
+        evidence_frame = pd.DataFrame([top_evidence])
+        st.dataframe(
+            evidence_frame,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "subject_type": st.column_config.TextColumn("Subject Type"),
+                "subject_name": st.column_config.TextColumn("Subject"),
+                "evidence_grade": st.column_config.TextColumn("Grade"),
+                "evidence_score": st.column_config.ProgressColumn(
+                    "Evidence Score",
+                    min_value=0,
+                    max_value=100,
+                    format="%.2f",
+                ),
+                "reason": st.column_config.TextColumn("Reason"),
+            },
+        )
+    else:
+        st.info("No top evidence available from the Core preview.")
+
+    warnings = result.get("warnings", [])
+    st.markdown('<div class="section-title">Core Warnings</div>', unsafe_allow_html=True)
+    if warnings:
+        st.markdown("\n".join(f"- {warning}" for warning in warnings))
+    else:
+        st.success("Core preview completed with no warnings.")
+
+
+def render_daily_alpha_report_section(df: pd.DataFrame) -> None:
+    """Render Daily Alpha Report Agent preview without scheduling or notifications."""
+    st.markdown('<div class="section-title">Daily Alpha Report Preview</div>', unsafe_allow_html=True)
+
+    report = build_daily_alpha_report(df)
+    if not report:
+        st.info("Daily Alpha Report preview will appear after token snapshot data is available.")
+        return
+
+    summary = report.get("market_summary", {})
+    st.caption(f"Report date: {report.get('report_date', 'N/A')}")
+    col_tokens, col_themes, col_alerts, col_score = st.columns(4)
+    col_tokens.metric("Tokens", summary.get("token_count", 0))
+    col_themes.metric("Themes", summary.get("theme_count", 0))
+    col_alerts.metric("Active Alerts", summary.get("active_alert_count", 0))
+    col_score.metric("Max Early Alpha", summary.get("max_early_alpha_score", "0.00"))
+
+    st.info(str(summary.get("market_read", "No market summary available.")))
+
+    summary_rows = [{"metric": key, "value": value} for key, value in summary.items()]
+    st.markdown('<div class="section-title">Report Summary</div>', unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
+
+    theme_columns = ["theme_name", "signal_strength", "description", "related_tokens", "reason"]
+    top_themes = _records_frame(report.get("top_themes", []), theme_columns)
+    if "related_tokens" in top_themes.columns:
+        top_themes["related_tokens"] = top_themes["related_tokens"].apply(
+            lambda tokens: ", ".join(tokens) if isinstance(tokens, list) else str(tokens)
+        )
+    st.markdown('<div class="section-title">Report Top Themes</div>', unsafe_allow_html=True)
+    if top_themes.empty:
+        st.info("No themes detected for this report preview.")
+    else:
+        st.dataframe(top_themes, width="stretch", hide_index=True)
+
+    token_columns = [
+        "symbol",
+        "token_name",
+        "narrative",
+        "alert_level",
+        "early_alpha_score",
+        "agent_score",
+        "alpha_score",
+        "volume_24h",
+        "liquidity_usd",
+        "momentum_status",
+        "rug_risk_level",
+        "reason",
+    ]
+    st.markdown('<div class="section-title">Report Top Tokens</div>', unsafe_allow_html=True)
+    top_tokens = _records_frame(report.get("top_tokens", []), token_columns)
+    if top_tokens.empty:
+        st.info("No top tokens available for this report preview.")
+    else:
+        st.dataframe(top_tokens, width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">Report Notable Signals</div>', unsafe_allow_html=True)
+    notable_signals = _records_frame(report.get("notable_signals", []), token_columns)
+    if notable_signals.empty:
+        st.info("No WATCH / HIGH / CRITICAL signals in this report preview.")
+    else:
+        st.dataframe(notable_signals, width="stretch", hide_index=True)
+
+    social_columns = [
+        "source_platform",
+        "author",
+        "mentioned_tokens",
+        "mentioned_themes",
+        "social_strength",
+        "evidence_value",
+        "hype_risk",
+        "reason",
+    ]
+    st.markdown('<div class="section-title">Social Signals</div>', unsafe_allow_html=True)
+    social_signals = _records_frame(report.get("social_signals", []), social_columns)
+    if social_signals.empty:
+        st.info("No social signal data supplied for this Daily Alpha Report preview.")
+    else:
+        social_signals = _stringify_list_columns(social_signals, ["mentioned_tokens", "mentioned_themes"])
+        st.dataframe(
+            social_signals,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "source_platform": st.column_config.TextColumn("Platform"),
+                "author": st.column_config.TextColumn("Author"),
+                "mentioned_tokens": st.column_config.TextColumn("Tokens"),
+                "mentioned_themes": st.column_config.TextColumn("Themes"),
+                "social_strength": st.column_config.ProgressColumn(
+                    "Social Strength",
+                    min_value=0,
+                    max_value=100,
+                    format="%.2f",
+                ),
+                "evidence_value": st.column_config.TextColumn("Evidence Value"),
+                "hype_risk": st.column_config.TextColumn("Hype Risk"),
+                "reason": st.column_config.TextColumn("Reason"),
+            },
+        )
+
+    st.markdown('<div class="section-title">Social Evidence Summary</div>', unsafe_allow_html=True)
+    social_summary = report.get("social_summary", {})
+    if social_summary and social_summary.get("signal_count"):
+        col_signal_count, col_avg_strength, col_top_signal = st.columns([1, 1, 2])
+        col_signal_count.metric("Social Signals", social_summary.get("signal_count", 0))
+        col_avg_strength.metric("Avg Social Strength", social_summary.get("avg_social_strength", "0.00"))
+        col_top_signal.metric("Top Social Signal", social_summary.get("top_social_signal", "none"))
+        summary_rows = [
+            {"metric": key, "value": json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value}
+            for key, value in social_summary.items()
+        ]
+        st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
+    else:
+        st.info("Social Evidence Summary will appear after manual social signal data is available.")
+
+    st.markdown('<div class="section-title">Hype Risk Summary</div>', unsafe_allow_html=True)
+    hype_risk_summary = report.get("hype_risk_summary", {})
+    if hype_risk_summary and hype_risk_summary.get("signal_count"):
+        distribution = hype_risk_summary.get("hype_risk_distribution", {})
+        high_hype_signals = hype_risk_summary.get("high_hype_signals", [])
+        st.json(
+            {
+                "signal_count": hype_risk_summary.get("signal_count", 0),
+                "hype_risk_distribution": distribution,
+            }
+        )
+        if high_hype_signals:
+            st.markdown("\n".join(f"- {signal}" for signal in high_hype_signals))
+        else:
+            st.info("No HIGH hype risk social signals in this preview.")
+    else:
+        st.info("Hype Risk Summary will appear after social signal data is available.")
+
+    social_evidence_columns = [
+        "subject_type",
+        "subject_name",
+        "evidence_grade",
+        "evidence_score",
+        "social_evidence",
+        "social_risk_flags",
+        "reason",
+    ]
+    st.markdown('<div class="section-title">Social-enhanced Evidence Grades</div>', unsafe_allow_html=True)
+    social_enhanced = _records_frame(report.get("social_enhanced_evidence_grades", []), social_evidence_columns)
+    if social_enhanced.empty:
+        st.info("Social-enhanced Evidence Grades will appear after social signal data is available.")
+    else:
+        social_enhanced = _stringify_list_columns(social_enhanced, ["social_evidence", "social_risk_flags"])
+        st.dataframe(
+            social_enhanced,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "subject_type": st.column_config.TextColumn("Subject Type"),
+                "subject_name": st.column_config.TextColumn("Subject"),
+                "evidence_grade": st.column_config.TextColumn("Grade"),
+                "evidence_score": st.column_config.ProgressColumn(
+                    "Evidence Score",
+                    min_value=0,
+                    max_value=100,
+                    format="%.2f",
+                ),
+                "social_evidence": st.column_config.TextColumn("Social Evidence"),
+                "social_risk_flags": st.column_config.TextColumn("Social Risk Flags"),
+                "reason": st.column_config.TextColumn("Reason"),
+            },
+        )
+
+    evidence_columns = [
+        "subject_type",
+        "subject_name",
+        "evidence_grade",
+        "evidence_score",
+        "social_evidence",
+        "social_risk_flags",
+        "reason",
+    ]
+    st.markdown('<div class="section-title">Evidence Grades</div>', unsafe_allow_html=True)
+    evidence_grades = _records_frame(report.get("evidence_grades", []), evidence_columns)
+    if evidence_grades.empty:
+        st.info("No evidence grades available for this report preview.")
+    else:
+        evidence_grades = _stringify_list_columns(evidence_grades, ["social_evidence", "social_risk_flags"])
+        st.dataframe(
+            evidence_grades,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "subject_type": st.column_config.TextColumn("Subject Type"),
+                "subject_name": st.column_config.TextColumn("Subject"),
+                "evidence_grade": st.column_config.TextColumn("Grade"),
+                "evidence_score": st.column_config.ProgressColumn(
+                    "Evidence Score",
+                    min_value=0,
+                    max_value=100,
+                    format="%.2f",
+                ),
+                "social_evidence": st.column_config.TextColumn("Social Evidence"),
+                "social_risk_flags": st.column_config.TextColumn("Social Risk Flags"),
+                "reason": st.column_config.TextColumn("Reason"),
+            },
+        )
+
+    st.markdown('<div class="section-title">Top Evidence</div>', unsafe_allow_html=True)
+    top_evidence = report.get("top_evidence", [])
+    if top_evidence:
+        st.markdown(
+            "\n".join(
+                "- "
+                f"{row.get('subject_type')}:{row.get('subject_name')} "
+                f"grade={row.get('evidence_grade')} "
+                f"score={float(row.get('evidence_score') or 0):.2f} "
+                f"reason={row.get('reason')}"
+                for row in top_evidence
+            )
+        )
+    else:
+        st.info("No strong evidence rows available for this report preview.")
+
+    st.markdown('<div class="section-title">Weak Evidence / Risks</div>', unsafe_allow_html=True)
+    weak_evidence = report.get("weak_evidence", [])
+    if weak_evidence:
+        st.markdown(
+            "\n".join(
+                "- "
+                f"{row.get('subject_type')}:{row.get('subject_name')} "
+                f"grade={row.get('evidence_grade')} "
+                f"score={float(row.get('evidence_score') or 0):.2f} "
+                f"weak={', '.join(row.get('weak_evidence') or [])} "
+                f"risks={', '.join(row.get('risk_flags') or [])}"
+                for row in weak_evidence
+            )
+        )
+    else:
+        st.info("No weak evidence rows available for this report preview.")
+
+    st.markdown('<div class="section-title">Risk Flags Summary</div>', unsafe_allow_html=True)
+    risk_flags_summary = report.get("risk_flags_summary", [])
+    if risk_flags_summary:
+        st.markdown("\n".join(f"- {risk_flag}" for risk_flag in risk_flags_summary))
+    else:
+        st.info("No evidence risk flags available for this report preview.")
+
+    st.markdown('<div class="section-title">Report Risks</div>', unsafe_allow_html=True)
+    risks = report.get("risks", [])
+    if risks:
+        st.markdown("\n".join(f"- {risk}" for risk in risks))
+    else:
+        st.info("No report risks available.")
+
+    st.markdown('<div class="section-title">Report Watchlist</div>', unsafe_allow_html=True)
+    watchlist = _records_frame(report.get("watchlist", []), token_columns)
+    if watchlist.empty:
+        st.info("No watchlist candidates in this report preview.")
+    else:
+        st.dataframe(watchlist, width="stretch", hide_index=True)
+
+    st.markdown('<div class="section-title">Report Next Actions</div>', unsafe_allow_html=True)
+    next_actions = report.get("next_actions", [])
+    if next_actions:
+        st.markdown("\n".join(f"- {action}" for action in next_actions))
+    else:
+        st.info("No next actions generated.")
+
+
+def render_memory_summary_section() -> None:
+    """Render first-stage Memory Agent report index without writing memory state."""
+    st.markdown('<div class="section-title">Memory Summary</div>', unsafe_allow_html=True)
+
+    reports = build_memory_summary(limit=7)
+    if not reports:
+        st.info("Memory Summary will appear after a Daily Alpha Report is archived into memory/index.json.")
+        return
+
+    frame = _records_frame(
+        reports,
+        [
+            "report_date",
+            "top_theme",
+            "top_tokens",
+            "risk_count",
+            "social_signal_count",
+            "high_hype_count",
+            "top_social_signal",
+            "file_path",
+        ],
+    )
+    if "top_tokens" in frame.columns:
+        frame["top_tokens"] = frame["top_tokens"].apply(
+            lambda tokens: ", ".join(tokens) if isinstance(tokens, list) else str(tokens)
+        )
+    for column in ["risk_count", "social_signal_count", "high_hype_count"]:
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0).astype(int)
+    if "top_social_signal" in frame.columns:
+        frame["top_social_signal"] = frame["top_social_signal"].fillna("none").replace("", "none")
+
+    latest_report = reports[0]
+    col_count, col_latest, col_theme, col_risks, col_social, col_hype = st.columns(6)
+    col_count.metric("Archived Reports", len(reports))
+    col_latest.metric("Latest Report", latest_report.get("report_date", "N/A"))
+    col_theme.metric("Latest Top Theme", latest_report.get("top_theme", "none"))
+    col_risks.metric("Latest Risk Count", latest_report.get("risk_count", 0))
+    col_social.metric("Latest Social Signals", latest_report.get("social_signal_count", 0) or 0)
+    col_hype.metric("Latest High Hype Count", latest_report.get("high_hype_count", 0) or 0)
+
+    st.dataframe(
+        frame,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "report_date": st.column_config.TextColumn("Report Date"),
+            "top_theme": st.column_config.TextColumn("Top Theme"),
+            "top_tokens": st.column_config.TextColumn("Top Tokens"),
+            "risk_count": st.column_config.NumberColumn("Risk Count", format="%d"),
+            "social_signal_count": st.column_config.NumberColumn("Social Signals", format="%d"),
+            "high_hype_count": st.column_config.NumberColumn("High Hype Count", format="%d"),
+            "top_social_signal": st.column_config.TextColumn("Top Social Signal"),
+            "file_path": st.column_config.TextColumn("File Path"),
+        },
     )
 
 
@@ -385,6 +1080,49 @@ def render_metrics(df: pd.DataFrame) -> None:
     col_gain.metric("Max 24h Move", f"{max_gain:.2f}%")
 
 
+def render_chain_filter(df: pd.DataFrame) -> str:
+    """Render a read-only chain filter for the multi-chain dashboard."""
+    available = set(df["chain"].dropna().astype(str).str.lower()) if "chain" in df.columns else set()
+    labels = ["All", "Ethereum", "Solana", "BSC"]
+    help_text = "Filter dashboard views by chain. This does not change scanner behavior."
+    if available:
+        help_text = f"Available chains in latest CSV: {', '.join(sorted(available))}"
+    return st.sidebar.selectbox("Chain", labels, index=0, help=help_text)
+
+
+def render_chain_stats(df: pd.DataFrame) -> None:
+    """Render per-chain candidate count, liquidity, and volume statistics."""
+    st.markdown('<div class="section-title">Multi-chain Summary</div>', unsafe_allow_html=True)
+    if df.empty or "chain" not in df.columns:
+        st.info("Multi-chain stats will appear after the next scan writes chain data.")
+        return
+
+    stats = (
+        df.groupby("chain", dropna=False)
+        .agg(
+            candidate_count=("symbol", "count"),
+            avg_liquidity=("liquidity_usd", "mean"),
+            avg_volume_24h=("volume_24h", "mean"),
+        )
+        .reset_index()
+        .sort_values("chain")
+    )
+    stats["avg_liquidity"] = stats["avg_liquidity"].map(format_compact_usd)
+    stats["avg_volume_24h"] = stats["avg_volume_24h"].map(format_compact_usd)
+    st.dataframe(
+        stats.rename(
+            columns={
+                "chain": "Chain",
+                "candidate_count": "Candidate Count",
+                "avg_liquidity": "Average Liquidity",
+                "avg_volume_24h": "Average Volume 24h",
+            }
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+
+
 def render_top_token(df: pd.DataFrame) -> str | None:
     """Render a special showcase panel for the highest-alpha token."""
     if df.empty:
@@ -396,11 +1134,12 @@ def render_top_token(df: pd.DataFrame) -> str | None:
     top_symbol = str(top_row["symbol"])
     safe_symbol = html.escape(top_symbol)
     safe_token_name = html.escape(str(top_row["token_name"]))
+    safe_chain = html.escape(str(top_row.get("chain", "unknown")).upper())
 
     st.markdown(
         f"""
         <div class="top-token">
-            <div class="top-token-title">Top AI Candidate · {safe_symbol} / {safe_token_name}</div>
+            <div class="top-token-title">Top AI Candidate · {safe_chain} · {safe_symbol} / {safe_token_name}</div>
             <div class="top-token-grid">
                 <div class="top-token-metric">
                     <div class="top-token-label">Early Alpha</div>
@@ -428,7 +1167,7 @@ def render_top_token(df: pd.DataFrame) -> str | None:
         unsafe_allow_html=True,
     )
 
-    return top_symbol
+    return f"{str(top_row.get('chain', 'unknown')).lower()}:{top_symbol}"
 
 
 def render_ai_summary_cards(df: pd.DataFrame) -> None:
@@ -436,7 +1175,7 @@ def render_ai_summary_cards(df: pd.DataFrame) -> None:
     st.markdown('<div class="section-title">AI Summary Cards</div>', unsafe_allow_html=True)
 
     if df.empty:
-        st.info("AI Summary cards will appear after the first scanner run.")
+        st.info("AI Summary cards will appear after the first Market Intelligence run.")
         return
 
     cards = []
@@ -807,11 +1546,11 @@ def render_v11_early_alpha_sections(df: pd.DataFrame) -> None:
     )
 
     st.markdown('<div class="section-title">First Seen Tokens</div>', unsafe_allow_html=True)
-    st.dataframe(
-        df[df["is_first_seen"]].sort_values("early_alpha_score", ascending=False)[early_columns],
-        width="stretch",
-        hide_index=True,
-    )
+    first_seen = df[df["is_first_seen"]].sort_values("early_alpha_score", ascending=False)
+    if first_seen.empty:
+        st.info("No first-seen tokens in the latest scan.")
+    else:
+        st.dataframe(first_seen[early_columns], width="stretch", hide_index=True)
 
     st.markdown('<div class="section-title">Early Alpha Ranking</div>', unsafe_allow_html=True)
     st.dataframe(
@@ -821,14 +1560,14 @@ def render_v11_early_alpha_sections(df: pd.DataFrame) -> None:
     )
 
     st.markdown('<div class="section-title">Consecutive Momentum Tokens</div>', unsafe_allow_html=True)
-    st.dataframe(
-        df[df["consecutive_up_count"] > 0].sort_values(
-            ["consecutive_up_count", "early_alpha_score"],
-            ascending=[False, False],
-        )[early_columns],
-        width="stretch",
-        hide_index=True,
+    consecutive = df[df["consecutive_up_count"] > 0].sort_values(
+        ["consecutive_up_count", "early_alpha_score"],
+        ascending=[False, False],
     )
+    if consecutive.empty:
+        st.info("No consecutive momentum tokens in the latest scan.")
+    else:
+        st.dataframe(consecutive[early_columns], width="stretch", hide_index=True)
 
     st.markdown('<div class="section-title">Early Alpha Score Distribution</div>', unsafe_allow_html=True)
     score_bins = pd.cut(
@@ -839,37 +1578,148 @@ def render_v11_early_alpha_sections(df: pd.DataFrame) -> None:
     st.bar_chart(score_bins.value_counts().sort_index())
 
 
+def render_signal_memory_sections(signal_events: pd.DataFrame, alpha_tokens: pd.DataFrame) -> None:
+    """Render v1.2 Signal Memory and outcome audit panels."""
+    st.markdown('<div class="section-title">Signal Memory</div>', unsafe_allow_html=True)
+
+    if signal_events.empty:
+        st.info("No new signal transition events yet. Latest scan candidates are shown above.")
+    else:
+        numeric_columns = [
+            "early_alpha_score",
+            "agent_score",
+            "outcome_30m_price_change",
+            "outcome_1h_price_change",
+            "outcome_4h_price_change",
+            "outcome_1h_volume_change",
+            "outcome_1h_early_alpha_change",
+        ]
+        events = signal_events.copy()
+        for column in numeric_columns:
+            if column in events.columns:
+                events[column] = pd.to_numeric(events[column], errors="coerce")
+
+        event_columns = [
+            "created_at",
+            "symbol",
+            "event_type",
+            "previous_alert_level",
+            "alert_level",
+            "early_alpha_score",
+            "outcome_status",
+            "outcome_30m_price_change",
+            "outcome_1h_price_change",
+            "outcome_4h_price_change",
+            "outcome_1h_early_alpha_change",
+            "early_alpha_reason",
+        ]
+        available_columns = [column for column in event_columns if column in events.columns]
+        st.dataframe(events[available_columns].head(25), width="stretch", hide_index=True)
+
+        st.markdown('<div class="section-title">Signal Outcome Distribution</div>', unsafe_allow_html=True)
+        if "outcome_status" in events.columns:
+            st.bar_chart(events["outcome_status"].fillna("PENDING").value_counts())
+
+    st.markdown('<div class="section-title">Repeated WATCH Candidates</div>', unsafe_allow_html=True)
+    if alpha_tokens.empty:
+        st.info("Repeated WATCH candidates will appear after scan data is available.")
+        return
+
+    repeated_watch = alpha_tokens[
+        (alpha_tokens["alert_level"] == "WATCH")
+        & (pd.to_numeric(alpha_tokens["scan_count"], errors="coerce").fillna(0) > 20)
+    ].sort_values(["scan_count", "early_alpha_score"], ascending=[False, False])
+    watch_columns = [
+        "symbol",
+        "token_name",
+        "scan_count",
+        "early_alpha_score",
+        "consecutive_up_count",
+        "token_age_bucket",
+        "rug_risk_level",
+        "early_alpha_reason",
+    ]
+    if repeated_watch.empty:
+        st.info("No repeated WATCH candidates in the latest scan.")
+    else:
+        st.dataframe(repeated_watch[watch_columns], width="stretch", hide_index=True)
+
+
+def render_signal_quality_summary(manifest: dict) -> None:
+    """Render structured signal quality metrics from the manifest."""
+    quality = manifest.get("signal_quality", {}) if manifest else {}
+    if not quality:
+        return
+
+    st.markdown('<div class="section-title">Signal Quality Summary</div>', unsafe_allow_html=True)
+    quality_rows = [
+        {"metric": "WATCH", "value": quality.get("watch_count", 0)},
+        {"metric": "HIGH", "value": quality.get("high_count", 0)},
+        {"metric": "CRITICAL", "value": quality.get("critical_count", 0)},
+        {"metric": "OLD WATCH", "value": quality.get("old_watch_count", 0)},
+        {"metric": "Repeated WATCH", "value": quality.get("repeated_watch_count", 0)},
+        {"metric": "Fresh Signal Events", "value": quality.get("fresh_signal_count", 0)},
+        {"metric": "Avg Early Alpha Alert Score", "value": quality.get("avg_early_alpha_alert_score", 0)},
+    ]
+    st.dataframe(pd.DataFrame(quality_rows), width="stretch", hide_index=True)
+
+
 @st.fragment(run_every=REFRESH_INTERVAL)
 def render_dashboard() -> None:
     """Render dashboard content and refresh it every 30 seconds."""
     alpha_tokens = load_alpha_tokens(DATA_FILE)
+    manifest = load_market_system_manifest(MANIFEST_FILE)
+    signal_events = load_signal_events(DB_FILE)
     updated_at = get_data_updated_at(DATA_FILE)
+    selected_chain = render_chain_filter(alpha_tokens)
+    filtered_tokens = filter_tokens_by_chain(alpha_tokens, selected_chain)
+    if "chain" in signal_events.columns:
+        signal_events["chain"] = signal_events["chain"].fillna("unknown").astype(str).str.lower()
+    filtered_signal_events = filter_tokens_by_chain(signal_events, selected_chain)
 
     render_header(updated_at)
     st.write("")
-    render_metrics(alpha_tokens)
+    render_market_system_manifest(manifest)
     st.write("")
-    top_symbol = render_top_token(alpha_tokens)
+    render_metrics(filtered_tokens)
     st.write("")
-    render_ai_summary_cards(alpha_tokens)
+    render_chain_stats(alpha_tokens)
     st.write("")
-    render_v07_momentum_sections(alpha_tokens)
+    render_latest_scan_snapshot(filtered_tokens, manifest)
     st.write("")
-    render_v08_intelligence_sections(alpha_tokens)
+    render_core_run_preview_section()
     st.write("")
-    render_v091_token_age_sections(alpha_tokens)
+    render_theme_scanner_section(filtered_tokens)
     st.write("")
-    render_v09_risk_sections(alpha_tokens)
+    render_daily_alpha_report_section(filtered_tokens)
     st.write("")
-    render_v11_early_alpha_sections(alpha_tokens)
+    render_memory_summary_section()
     st.write("")
-    render_v10_signal_sections(alpha_tokens)
+    top_symbol = render_top_token(filtered_tokens)
     st.write("")
-    render_token_table(alpha_tokens, top_symbol)
+    render_ai_summary_cards(filtered_tokens)
+    st.write("")
+    render_v07_momentum_sections(filtered_tokens)
+    st.write("")
+    render_v08_intelligence_sections(filtered_tokens)
+    st.write("")
+    render_v091_token_age_sections(filtered_tokens)
+    st.write("")
+    render_v09_risk_sections(filtered_tokens)
+    st.write("")
+    render_v11_early_alpha_sections(filtered_tokens)
+    st.write("")
+    render_signal_quality_summary(manifest)
+    st.write("")
+    render_signal_memory_sections(filtered_signal_events, filtered_tokens)
+    st.write("")
+    render_v10_signal_sections(filtered_tokens)
+    st.write("")
+    render_token_table(filtered_tokens, top_symbol)
 
 
 def main() -> None:
-    """Run the Alpha Hunter Streamlit dashboard."""
+    """Run the Alpha Hunter Market System Streamlit dashboard."""
     configure_page()
     render_dashboard()
 

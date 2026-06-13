@@ -1,4 +1,4 @@
-"""Token filtering and CSV persistence for Alpha Hunter Agent."""
+"""Token filtering and CSV persistence for Alpha Hunter Market System."""
 
 from __future__ import annotations
 
@@ -8,22 +8,18 @@ from typing import Any
 
 import pandas as pd
 
+from config import CHAIN_FILTERS, CHAIN_SEARCH_QUERIES, SUPPORTED_CHAINS
 from src.ai.alpha_analyzer import AlphaAnalyzer
 from src.api.dexscreener_client import DexScreenerClient
 from src.utils.paths import DATA_DIR, ensure_project_directories
 
 
 class AlphaTokenService:
-    """Find, filter, rank, and save Alpha Hunter token candidates."""
+    """Find, filter, rank, and save market intelligence token candidates."""
 
     CSV_PATH = DATA_DIR / "alpha_tokens.csv"
     TOP_N = 10
-
-    MIN_LIQUIDITY_USD = 50_000
-    MIN_VOLUME_24H = 100_000
-    MIN_PRICE_CHANGE_24H = -30
-    MAX_PRICE_CHANGE_24H = 200
-    MAX_FDV = 50_000_000
+    PER_CHAIN_TOP_N = 5
     OUTPUT_DEFAULTS = {
         "score_change_10m": 0,
         "score_change_30m": 0,
@@ -70,16 +66,26 @@ class AlphaTokenService:
         self.csv_path = csv_path or self.CSV_PATH
 
     def find_and_save_top_tokens(self) -> pd.DataFrame:
-        """Run the full discovery pipeline and save the resulting Top 10 CSV."""
+        """Run the full multi-chain discovery pipeline and save the candidate CSV."""
         ensure_project_directories()
 
-        addresses = self.client.get_top_boosted_solana_token_addresses()
-        if not addresses:
-            self.logger.warning("DexScreener returned no Solana hot token candidates")
+        all_pairs: list[dict[str, Any]] = []
+        for chain in SUPPORTED_CHAINS:
+            addresses = self.client.get_top_boosted_token_addresses(chain)
+            if not addresses:
+                self.logger.warning("DexScreener returned no %s hot token candidates", chain)
+            else:
+                all_pairs.extend(self.client.get_token_pairs(chain, addresses))
+
+            fallback_pairs = self.client.search_token_pairs(chain, CHAIN_SEARCH_QUERIES.get(chain, [chain]))
+            if fallback_pairs:
+                all_pairs.extend(fallback_pairs)
+
+        if not all_pairs:
+            self.logger.warning("DexScreener returned no multi-chain hot token candidates")
             return self._save_empty_csv()
 
-        pairs = self.client.get_solana_token_pairs(addresses)
-        tokens = self._pairs_to_dataframe(pairs)
+        tokens = self._pairs_to_dataframe(all_pairs)
 
         if tokens.empty:
             self.logger.warning("No pair metrics were available for candidate tokens")
@@ -90,40 +96,47 @@ class AlphaTokenService:
         top_tokens = self._rank_tokens(analyzed_tokens)
         self._with_output_defaults(top_tokens).to_csv(self.csv_path, index=False)
 
-        self.logger.info("Saved %s filtered tokens to %s", len(top_tokens), self.csv_path)
+        self.logger.info("Saved %s multi-chain filtered tokens to %s", len(top_tokens), self.csv_path)
         return top_tokens
+
+    def normalize_pair(self, pair: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a DexScreener pair into the Alpha Hunter multi-chain schema."""
+        base_token = pair.get("baseToken") or {}
+        quote_token = pair.get("quoteToken") or {}
+        liquidity = pair.get("liquidity") or {}
+        volume = pair.get("volume") or {}
+        price_change = pair.get("priceChange") or {}
+
+        chain = str(pair.get("chainId") or "").lower()
+        token_symbol = base_token.get("symbol")
+        contract_address = base_token.get("address")
+        pair_url = pair.get("url")
+
+        return {
+            "chain": chain,
+            "token_name": base_token.get("name"),
+            "token_symbol": token_symbol,
+            "contract_address": contract_address,
+            "price_usd": pair.get("priceUsd"),
+            "liquidity_usd": liquidity.get("usd"),
+            "volume_24h": volume.get("h24"),
+            "price_change_24h": price_change.get("h24"),
+            "fdv": pair.get("fdv"),
+            "pair_created_at": pair.get("pairCreatedAt"),
+            "dex": pair.get("dexId"),
+            "pair_url": pair_url,
+            "pair_address": pair.get("pairAddress"),
+            "quote_symbol": quote_token.get("symbol"),
+            "market_cap": pair.get("marketCap"),
+            # Compatibility fields used by existing services and dashboard panels.
+            "symbol": token_symbol,
+            "token_address": contract_address,
+            "url": pair_url,
+        }
 
     def _pairs_to_dataframe(self, pairs: list[dict[str, Any]]) -> pd.DataFrame:
         """Normalize nested DexScreener pair objects into a flat DataFrame."""
-        rows: list[dict[str, Any]] = []
-
-        for pair in pairs:
-            base_token = pair.get("baseToken") or {}
-            quote_token = pair.get("quoteToken") or {}
-            liquidity = pair.get("liquidity") or {}
-            volume = pair.get("volume") or {}
-            price_change = pair.get("priceChange") or {}
-
-            rows.append(
-                {
-                    "chain": pair.get("chainId"),
-                    "dex": pair.get("dexId"),
-                    "pair_address": pair.get("pairAddress"),
-                    "token_address": base_token.get("address"),
-                    "token_name": base_token.get("name"),
-                    "symbol": base_token.get("symbol"),
-                    "quote_symbol": quote_token.get("symbol"),
-                    "price_usd": pair.get("priceUsd"),
-                    "liquidity_usd": liquidity.get("usd"),
-                    "volume_24h": volume.get("h24"),
-                    "price_change_24h": price_change.get("h24"),
-                    "fdv": pair.get("fdv"),
-                    "market_cap": pair.get("marketCap"),
-                    "pair_created_at": pair.get("pairCreatedAt"),
-                    "url": pair.get("url"),
-                }
-            )
-
+        rows = [self.normalize_pair(pair) for pair in pairs]
         dataframe = pd.DataFrame(rows)
         return self._coerce_numeric_columns(dataframe)
 
@@ -146,27 +159,38 @@ class AlphaTokenService:
         return dataframe
 
     def _filter_tokens(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        """Apply Alpha Hunter v0.5 liquidity, volume, momentum, and FDV filters."""
-        required_columns = ["liquidity_usd", "volume_24h", "price_change_24h", "fdv"]
+        """Apply chain-specific liquidity, volume, momentum, and FDV filters."""
+        required_columns = ["chain", "liquidity_usd", "volume_24h", "price_change_24h", "fdv"]
         cleaned = dataframe.dropna(subset=required_columns).copy()
+        cleaned["chain"] = cleaned["chain"].astype(str).str.lower()
 
-        filtered = cleaned[
-            (cleaned["liquidity_usd"] > self.MIN_LIQUIDITY_USD)
-            & (cleaned["volume_24h"] > self.MIN_VOLUME_24H)
-            & (cleaned["price_change_24h"] >= self.MIN_PRICE_CHANGE_24H)
-            & (cleaned["price_change_24h"] <= self.MAX_PRICE_CHANGE_24H)
-            & (cleaned["fdv"] < self.MAX_FDV)
-        ]
+        filtered_frames: list[pd.DataFrame] = []
+        for chain, chain_frame in cleaned.groupby("chain", dropna=False):
+            filters = CHAIN_FILTERS.get(str(chain), CHAIN_FILTERS["ethereum"])
+            filtered_frames.append(
+                chain_frame[
+                    (chain_frame["liquidity_usd"] > filters["liquidity_usd"])
+                    & (chain_frame["volume_24h"] > filters["volume_24h"])
+                    & (chain_frame["price_change_24h"] >= filters["min_price_change_24h"])
+                    & (chain_frame["price_change_24h"] <= filters["max_price_change_24h"])
+                    & (chain_frame["fdv"] < filters["fdv"])
+                ]
+            )
+
+        filtered = pd.concat(filtered_frames, ignore_index=True) if filtered_frames else cleaned.head(0)
 
         self.logger.info("Filtered %s pairs down to %s alpha candidates", len(dataframe), len(filtered))
         return filtered
 
     def _rank_tokens(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        """Rank candidates by 24h volume and keep the Top 10 rows."""
+        """Rank all-chain Top 10 plus per-chain Top 5 rows."""
         columns = [
+            "chain",
             "symbol",
+            "token_symbol",
             "token_name",
             "token_address",
+            "contract_address",
             "price_usd",
             "liquidity_usd",
             "volume_24h",
@@ -179,20 +203,26 @@ class AlphaTokenService:
             "ai_summary",
             "dex",
             "url",
+            "pair_url",
         ]
 
         if dataframe.empty:
             return self._with_output_defaults(pd.DataFrame(columns=columns))
 
-        return (
-            dataframe.sort_values(
-                by=["volume_24h", "liquidity_usd"],
-                ascending=[False, False],
-            )
-            .drop_duplicates(subset=["token_address"], keep="first")
-            .head(self.TOP_N)[columns]
+        ranked = dataframe.sort_values(
+            by=["volume_24h", "liquidity_usd"],
+            ascending=[False, False],
+        ).drop_duplicates(subset=["chain", "contract_address"], keep="first")
+
+        all_chain_top = ranked.head(self.TOP_N)
+        per_chain_top = ranked.groupby("chain", dropna=False).head(self.PER_CHAIN_TOP_N)
+        combined = (
+            pd.concat([all_chain_top, per_chain_top], ignore_index=True)
+            .drop_duplicates(subset=["chain", "contract_address"], keep="first")
+            .sort_values(["volume_24h", "liquidity_usd"], ascending=[False, False])
             .reset_index(drop=True)
         )
+        return combined[columns]
 
     def _with_output_defaults(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         """Ensure raw CSV output keeps v0.7-v1.0 columns during scans."""
@@ -205,9 +235,12 @@ class AlphaTokenService:
     def _save_empty_csv(self) -> pd.DataFrame:
         """Save an empty CSV with stable headers when no tokens match."""
         columns = [
+            "chain",
             "symbol",
+            "token_symbol",
             "token_name",
             "token_address",
+            "contract_address",
             "price_usd",
             "liquidity_usd",
             "volume_24h",
@@ -220,6 +253,7 @@ class AlphaTokenService:
             "ai_summary",
             "dex",
             "url",
+            "pair_url",
         ]
         dataframe = self._with_output_defaults(pd.DataFrame(columns=columns))
         dataframe.to_csv(self.csv_path, index=False)

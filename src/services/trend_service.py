@@ -1,4 +1,4 @@
-"""Trend Alpha engine for Alpha Hunter Agent v0.7."""
+"""Trend Alpha engine for Alpha Hunter Market System."""
 
 from __future__ import annotations
 
@@ -14,8 +14,11 @@ class TrendService:
             return snapshots
 
         df = snapshots.copy()
+        if "chain" not in df.columns:
+            df["chain"] = "unknown"
+        df["chain"] = df["chain"].fillna("unknown").astype(str).str.lower()
         df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-        df = df.sort_values(["token_address", "created_at", "id"]).reset_index(drop=True)
+        df = df.sort_values(["chain", "token_address", "created_at", "id"]).reset_index(drop=True)
 
         for column in [
             "score_change_10m",
@@ -30,7 +33,7 @@ class TrendService:
         df["momentum_status"] = "STABLE"
 
         result_groups = []
-        for _, group in df.groupby("token_address", dropna=False):
+        for _, group in df.groupby(["chain", "token_address"], dropna=False):
             result_groups.append(self._calculate_group(group.copy()))
 
         result = pd.concat(result_groups, ignore_index=True)

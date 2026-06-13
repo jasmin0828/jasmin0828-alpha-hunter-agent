@@ -1,4 +1,4 @@
-"""Alpha Hunter Agent v1.1 entry point.
+"""Alpha Hunter Market System v1.2 architecture entry point.
 
 The agent only reads public DexScreener data. It does not connect to wallets
 and it never executes trades.
@@ -14,10 +14,16 @@ import pandas as pd
 
 from src.notifications.telegram_notifier import TelegramNotifier
 from src.services.alpha_token_service import AlphaTokenService
+from src.services.content_draft_service import ContentDraftService
+from src.services.daily_brief_service import DailyBriefService
 from src.services.early_alpha_service import EarlyAlphaService
+from src.services.market_system_manifest_service import MarketSystemManifestService
+from src.services.memory_note_service import MemoryNoteService
 from src.services.narrative_service import NarrativeService
+from src.services.report_notification_service import ReportNotificationService
 from src.services.risk_intelligence_service import RiskIntelligenceService
 from src.services.signal_calibration_service import SignalCalibrationService
+from src.services.signal_quality_service import SignalQualityService
 from src.services.smart_money_service import SmartMoneyService
 from src.services.token_age_service import TokenAgeService
 from src.services.trend_service import TrendService
@@ -64,7 +70,16 @@ def run_agent() -> None:
     risk_intelligence_service = RiskIntelligenceService()
     early_alpha_service = EarlyAlphaService()
     signal_calibration_service = SignalCalibrationService()
+    signal_quality_service = SignalQualityService()
+    manifest_service = MarketSystemManifestService()
+    daily_brief_service = DailyBriefService()
+    content_draft_service = ContentDraftService()
+    memory_note_service = MemoryNoteService()
+    report_notification_service = ReportNotificationService()
     store.initialize()
+    outcome_count = store.update_signal_event_outcomes()
+    if outcome_count:
+        logger.info("Updated %s signal event outcomes", outcome_count)
     scan_run_id = store.create_scan_run()
 
     try:
@@ -78,8 +93,24 @@ def run_agent() -> None:
     if top_tokens.empty or "token_address" not in top_tokens.columns:
         pipeline_snapshots = all_snapshots[all_snapshots["scan_run_id"] == scan_run_id].copy()
     else:
-        active_addresses = set(top_tokens["token_address"].dropna().astype(str))
-        pipeline_snapshots = all_snapshots[all_snapshots["token_address"].astype(str).isin(active_addresses)].copy()
+        if "chain" not in top_tokens.columns:
+            top_tokens["chain"] = "unknown"
+        if "chain" not in all_snapshots.columns:
+            all_snapshots["chain"] = "unknown"
+        active_token_keys = top_tokens.dropna(subset=["token_address"]).copy()
+        active_keys = set(
+            zip(
+                active_token_keys["chain"].fillna("unknown").astype(str).str.lower(),
+                active_token_keys["token_address"].astype(str),
+            )
+        )
+        snapshot_keys = list(
+            zip(
+                all_snapshots["chain"].fillna("unknown").astype(str).str.lower(),
+                all_snapshots["token_address"].astype(str),
+            )
+        )
+        pipeline_snapshots = all_snapshots[pd.Series(snapshot_keys, index=all_snapshots.index).isin(active_keys)].copy()
 
     trend_snapshots = trend_service.calculate_trends(pipeline_snapshots)
     current_trend_snapshots = trend_snapshots[trend_snapshots["scan_run_id"] == scan_run_id].copy()
@@ -106,9 +137,22 @@ def run_agent() -> None:
     store.finish_scan_run(scan_run_id, "completed", saved_count)
     current_snapshots = store.load_scan_snapshots(scan_run_id)
     current_snapshots.to_csv(service.csv_path, index=False)
+    signal_events = store.create_signal_events(scan_run_id, current_snapshots)
+    signal_quality = signal_quality_service.summarize(current_snapshots, signal_events)
+    manifest = manifest_service.write_scan_manifest(scan_run_id, current_snapshots, signal_events, signal_quality)
+    logger.info("Alpha Hunter Market System Manifest:\n%s", manifest["scan_summary"])
+    logger.info("Signal Quality Summary:\n%s", signal_quality)
+    brief_path = daily_brief_service.write_daily_brief(scan_run_id, current_snapshots, signal_events, manifest)
+    logger.info("Alpha Hunter Daily Brief written to %s", brief_path)
+    content_paths = content_draft_service.write_content_drafts(current_snapshots, signal_events, manifest)
+    logger.info("Alpha Hunter Content Drafts written to %s", content_paths)
+    memory_paths = memory_note_service.write_memory_notes(current_snapshots, signal_events, manifest)
+    logger.info("Alpha Hunter Memory Notes written to %s", memory_paths)
 
     if top_tokens.empty:
         logger.info("No tokens matched the current filters")
+        notifier.notify_health_status(current_snapshots, manifest, "no tokens matched current filters")
+        notify_due_reports(notifier, report_notification_service)
         return
 
     heating_tokens = current_snapshots[current_snapshots["momentum_status"] == "HEATING_UP"]
@@ -149,6 +193,7 @@ def run_agent() -> None:
 
     early_alpha_summary = current_snapshots[
         [
+            "chain",
             "symbol",
             "early_alpha_score",
             "early_alpha_reason",
@@ -169,6 +214,7 @@ def run_agent() -> None:
             "First Seen Tokens:\n%s",
             first_seen_tokens.sort_values("early_alpha_score", ascending=False)[
                 [
+                    "chain",
                     "symbol",
                     "token_name",
                     "early_alpha_score",
@@ -180,13 +226,55 @@ def run_agent() -> None:
             ].to_string(index=False),
         )
 
-    logger.info("Top %s alpha tokens:\n%s", len(top_tokens), top_tokens.to_string(index=False))
+    logger.info(
+        "All-chain Top 10 Alpha Candidates:\n%s",
+        top_tokens.sort_values(["volume_24h", "liquidity_usd"], ascending=[False, False])
+        .head(10)
+        .to_string(index=False),
+    )
+    if "chain" in top_tokens.columns:
+        for chain in ["ethereum", "solana", "bsc"]:
+            chain_tokens = top_tokens[top_tokens["chain"].astype(str).str.lower() == chain]
+            if chain_tokens.empty:
+                logger.info("%s Top 5:\nNone", chain.capitalize())
+                continue
+            logger.info(
+                "%s Top 5:\n%s",
+                chain.capitalize(),
+                chain_tokens.sort_values(["volume_24h", "liquidity_usd"], ascending=[False, False])
+                .head(5)
+                .to_string(index=False),
+            )
 
-    alert_tokens = current_snapshots[current_snapshots["alert_level"].isin(["CRITICAL", "HIGH", "WATCH"])]
+    if signal_events.empty:
+        alert_tokens = current_snapshots.head(0)
+        logger.info("No new signal events for Telegram after deduplication")
+        notifier.notify_health_status(current_snapshots, manifest, "no new signal events after deduplication")
+    else:
+        event_ids = set(signal_events["token_snapshot_id"].astype(int))
+        alert_tokens = current_snapshots[current_snapshots["id"].astype(int).isin(event_ids)].copy()
+        event_context = signal_events.set_index("token_snapshot_id")[["previous_alert_level", "event_type"]]
+        alert_tokens = alert_tokens.join(event_context, on="id")
     try:
         notifier.notify_top_tokens(alert_tokens)
     except Exception:
         logger.exception("Telegram notification failed")
+    notify_due_reports(notifier, report_notification_service)
+
+
+def notify_due_reports(notifier: TelegramNotifier, report_service: ReportNotificationService) -> None:
+    """Send scheduled Telegram reports after a scan has refreshed the database."""
+    logger = logging.getLogger(__name__)
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        logger.info("Telegram scheduled reports skipped in GitHub Actions")
+        return
+
+    for report in report_service.due_reports():
+        try:
+            notifier.notify_report(report.message, report.report_type)
+            report_service.mark_sent(report)
+        except Exception:
+            logger.exception("Telegram %s report failed", report.report_type)
 
 
 def run_scheduled_scan() -> None:
@@ -201,11 +289,11 @@ def run_scheduled_scan() -> None:
 
 
 def main() -> None:
-    """Run Alpha Hunter Agent as a long-lived PM2-managed process."""
+    """Run Alpha Hunter Market System as a long-lived PM2-managed process."""
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting Alpha Hunter Agent v1.1")
+    logger.info("Starting Alpha Hunter Market System v1.2")
     run_scheduled_scan()
 
     if os.getenv("GITHUB_ACTIONS") == "true":

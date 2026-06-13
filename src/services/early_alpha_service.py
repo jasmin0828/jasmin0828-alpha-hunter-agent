@@ -1,4 +1,4 @@
-"""Early Alpha Engine for Alpha Hunter Agent v1.1."""
+"""Early Alpha Engine for Alpha Hunter Market System."""
 
 from __future__ import annotations
 
@@ -22,15 +22,16 @@ class EarlyAlphaService:
         if enriched.empty:
             return enriched
 
+        enriched["chain"] = enriched["chain"].fillna("unknown").astype(str).str.lower()
         enriched["created_at"] = pd.to_datetime(enriched["created_at"], errors="coerce", utc=True)
-        enriched = enriched.sort_values(["token_address", "created_at", "id"]).reset_index(drop=True)
+        enriched = enriched.sort_values(["chain", "token_address", "created_at", "id"]).reset_index(drop=True)
 
         enriched["first_seen_at"] = pd.NA
         enriched["is_first_seen"] = False
         enriched["scan_count"] = 0
         enriched["consecutive_up_count"] = 0
 
-        for _, group in enriched.groupby("token_address", dropna=False):
+        for _, group in enriched.groupby(["chain", "token_address"], dropna=False):
             if group.empty:
                 continue
 
@@ -51,6 +52,7 @@ class EarlyAlphaService:
         """Ensure required input and output columns exist."""
         defaults = {
             "id": 0,
+            "chain": "unknown",
             "token_address": "",
             "created_at": pd.NA,
             "alpha_score": 0,
