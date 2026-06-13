@@ -1,1 +1,1 @@
-"""Alpha Hunter Agent source package."""
+"""Alpha Hunter Market System source package."""

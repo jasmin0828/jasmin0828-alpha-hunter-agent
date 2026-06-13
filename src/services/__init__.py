@@ -1,1 +1,1 @@
-"""Business services used by Alpha Hunter Agent."""
+"""Business services used by Alpha Hunter Market System."""

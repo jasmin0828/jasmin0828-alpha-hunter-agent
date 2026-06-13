@@ -1,1 +1,1 @@
-"""API clients used by Alpha Hunter Agent."""
+"""API clients used by Alpha Hunter Market System."""

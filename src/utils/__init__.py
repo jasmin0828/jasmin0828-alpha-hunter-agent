@@ -1,1 +1,1 @@
-"""Utility helpers for Alpha Hunter Agent."""
+"""Utility helpers for Alpha Hunter Market System."""

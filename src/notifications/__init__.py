@@ -1,1 +1,1 @@
-"""Notification integrations for Alpha Hunter Agent."""
+"""Notification integrations for Alpha Hunter Market System."""

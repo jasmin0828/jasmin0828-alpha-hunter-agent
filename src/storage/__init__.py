@@ -1,2 +1,1 @@
-"""Storage integrations for Alpha Hunter Agent."""
-
+"""Storage integrations for Alpha Hunter Market System."""

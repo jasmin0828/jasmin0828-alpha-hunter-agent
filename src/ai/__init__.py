@@ -1,1 +1,1 @@
-"""AI intelligence layer for Alpha Hunter Agent."""
+"""AI intelligence helpers for Alpha Hunter Market System."""
