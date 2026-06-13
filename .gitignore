@@ -9,9 +9,26 @@ __pycache__/
 
 data/*.csv
 data/*.db
+data/*.json
 logs/*.log
 logs/
 
+content/x/*.md
+content/notes/*.md
+memory/daily/*.md
+memory/tokens/*.md
+memory/narratives/*.md
+memory/signals/*.md
+memory/reports/*.md
+memory/index.json
+reports/*.md
+
+!content/README.md
+!content/**/.gitkeep
+!memory/README.md
+!memory/**/.gitkeep
+
 .DS_Store
+**/.DS_Store
 .idea/
 .vscode/
