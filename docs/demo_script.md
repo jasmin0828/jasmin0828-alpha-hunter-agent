@@ -1,8 +1,8 @@
-# Alpha Hunter Agent v0.5 Demo Script
+# Alpha Hunter Market System Demo Script
 
 This is a 3-minute product demo flow for the OKX Agentic Wallet competition
-showcase. The goal is to present Alpha Hunter Agent as a read-only AI market
-intelligence assistant, not as a trading bot.
+showcase. The goal is to present Alpha Hunter Market System as a read-only AI
+market intelligence system, not as a trading execution system.
 
 ## Before the Demo
 
@@ -25,7 +25,7 @@ Keep `AUTO_TRADING_ENABLED=false`.
 
 ## How to Start
 
-Terminal 1, start the agent:
+Terminal 1, start the Market Intelligence runtime:
 
 ```bash
 python main.py
@@ -46,15 +46,16 @@ Open the local Streamlit URL shown in the terminal.
 Say:
 
 ```text
-Alpha Hunter Agent is a read-only AI market-intelligence agent for Solana token
-discovery. It watches public DexScreener data, filters noisy markets, scores
-each token, and sends alerts to Telegram. It does not connect to wallets and it
-does not execute trades.
+Alpha Hunter Market System is a read-only AI market intelligence system. Its
+direct subsystems are Market Intelligence, AI Workflow Engine, Memory Layer,
+Content Engine, Automation Layer, and Future AI Trading Agent. It watches
+public DexScreener data, filters noisy markets, scores tokens, and sends alerts
+to Telegram. It does not connect to wallets and it does not execute trades.
 ```
 
 Point to the dashboard header badges:
 
-- Read-only agent
+- Read-only system
 - AI risk analysis
 - Telegram alerts
 - No wallet connection
@@ -80,7 +81,7 @@ highest-alpha candidate, its liquidity, volume, risk score, and 24h movement in
 one place.
 ```
 
-### 1:15-2:05, AI Intelligence Layer
+### 1:15-2:05, Market Intelligence
 
 Open the AI Summary Cards section.
 
@@ -95,10 +96,11 @@ Explain the five scoring dimensions:
 Say:
 
 ```text
-The AI Intelligence Layer creates two numeric scores and a plain-language
-summary. Alpha Score estimates opportunity quality. Risk Score highlights
-execution and manipulation risk. The summary flags momentum, liquidity health,
-rug risk, suspicious volume, and short-term speculative behavior.
+Market Intelligence turns raw market observations into Narrative Detection,
+Signal Analysis, and Research Reports. Alpha Score estimates opportunity
+quality. Risk Score highlights execution and manipulation risk. The summary
+flags momentum, liquidity health, rug risk, suspicious volume, and short-term
+speculative behavior.
 ```
 
 Point out examples:
@@ -130,7 +132,7 @@ Say:
 
 ```text
 The same intelligence leaves the dashboard and reaches the user through
-Telegram, so the agent can work as a background market monitor.
+Telegram, so the system can work as a background market monitor.
 ```
 
 ### 2:40-3:00, Safety and Closing
@@ -138,9 +140,10 @@ Telegram, so the agent can work as a background market monitor.
 Say:
 
 ```text
-The important safety boundary is that Alpha Hunter Agent is read-only. It does
-not connect to a wallet, request private keys, sign messages, or execute swaps.
-It is an intelligence layer that helps humans decide what to inspect next.
+The important safety boundary is that Alpha Hunter Market System is read-only.
+It does not connect to a wallet, request private keys, sign messages, or
+execute swaps. Future AI Trading Agent remains a placeholder until a separate
+safety model exists.
 ```
 
 End by showing the `AUTO_TRADING_ENABLED=false` setting in `.env` or README.
@@ -149,4 +152,4 @@ End by showing the `AUTO_TRADING_ENABLED=false` setting in `.env` or README.
 
 If live market data or Telegram is unavailable, use the dashboard CSV output
 from a previous run at `data/alpha_tokens.csv`. The dashboard reads the CSV and
-can still show the full AI Intelligence Layer experience.
+can still show the full Market Intelligence experience.

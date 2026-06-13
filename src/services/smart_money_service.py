@@ -1,4 +1,4 @@
-"""Simulated Smart Money Intelligence for Alpha Hunter Agent v0.8."""
+"""Simulated Smart Money Intelligence for Alpha Hunter Market System."""
 
 from __future__ import annotations
 
@@ -64,4 +64,3 @@ class SmartMoneyService:
         if pd.isna(value):
             return default
         return float(value)
-

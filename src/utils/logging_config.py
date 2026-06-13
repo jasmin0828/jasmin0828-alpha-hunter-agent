@@ -1,4 +1,4 @@
-"""Central logging setup for Alpha Hunter Agent."""
+"""Central logging setup for Alpha Hunter Market System."""
 
 from __future__ import annotations
 

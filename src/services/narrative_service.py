@@ -1,4 +1,4 @@
-"""Narrative Engine for Alpha Hunter Agent v0.8."""
+"""Narrative Detection engine for Alpha Hunter Market System."""
 
 from __future__ import annotations
 
@@ -40,4 +40,3 @@ class NarrativeService:
             if any(keyword in text for keyword in keywords):
                 return {"narrative": narrative, "narrative_score": float(score)}
         return {"narrative": "Unknown", "narrative_score": 20.0}
-

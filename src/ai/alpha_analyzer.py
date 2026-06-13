@@ -93,7 +93,7 @@ class AlphaAnalyzer:
         else:
             score += 8
 
-        # Volume is the primary attention signal for this scanner.
+        # Volume is the primary attention signal for this Market Intelligence run.
         if volume_24h >= self.HIGH_VOLUME_USD:
             score += 25
         elif volume_24h >= 300_000:

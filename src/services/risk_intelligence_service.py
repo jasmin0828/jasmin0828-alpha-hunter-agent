@@ -1,4 +1,4 @@
-"""Risk Intelligence Engine for Alpha Hunter Agent v0.9.1."""
+"""Risk Intelligence Engine for Alpha Hunter Market System."""
 
 from __future__ import annotations
 
