@@ -189,6 +189,29 @@ Scope:
 Goal: use enough historical thesis/outcome data to improve future signal weights
 and rule quality. Stage 3 is Future / Not implemented in v1.x.
 
+## Future Architecture Notes
+
+The future evaluation-loop architecture is described in
+`docs/future_architecture_evaluation_loop.md`.
+
+The HarnessX-inspired architecture reference is described in
+`docs/harnessx_inspired_architecture.md`.
+
+That document defines the planned path from:
+
+```text
+Observation System
+-> Observation + Evaluation System
+-> Self-Improving Market Intelligence System
+```
+
+It is not part of the v1.1 runtime. It is a candidate for v1.2 planning and a
+foundation for future v2.0 self-improving market intelligence work.
+
+The HarnessX-inspired document maps the same direction into Compose, Adapt, and
+Evolve layers. It is a future architecture reference only and does not change
+the current runtime.
+
 ## v1.0 Scope
 
 ```text
