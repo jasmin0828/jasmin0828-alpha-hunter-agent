@@ -254,6 +254,46 @@ Current learning boundary:
 - Loss Function Engine is a future module.
 - Before implementing Loss Function Engine, Alpha Hunter needs enough historical thesis/outcome data.
 
+## Future Architecture Reference
+
+Additional future architecture notes:
+
+- `docs/future_context_selection_layer.md`: future Context Selection Layer for
+  selecting the smallest sufficient context for each agent run using
+  provenance, supersession, relevance scoring, and deliberate forgetting.
+- `docs/future_skill_self_improvement_loop.md`: future Inner Loop / Outer Loop
+  self-improvement architecture for generating human-reviewed Skill Diffs and
+  Skill Changelogs from memory, evaluation, and feedback.
+
+This reference is not part of the v1.1 runtime. It does not change `main.py`,
+agent execution, database schema, dashboard behavior, scheduler behavior,
+Telegram behavior, API behavior, or any trading-related logic.
+
+## Future Self-Improvement Layer
+
+The Future Self-Improvement Layer is not implemented.
+
+Conceptual flow:
+
+```text
+Inner Loop
+-> Memory
+-> Evaluation
+-> Research Improvement Agent
+-> Skill Diff
+-> Human Approval
+-> Updated Skills
+-> Inner Loop
+```
+
+The Inner Loop performs the current research workflow: scan, theme detection,
+social signal review, evidence grading, report generation, and memory archive.
+
+The future Outer Loop reviews historical outputs, outcome observations, memory
+archives, and human feedback. It may propose Skill Diffs and Skill Changelog
+entries, but it must not automatically modify production logic, runtime code,
+agent execution, prompts, workflows, alerts, or scoring behavior.
+
 ## v2.0 Extension Agents
 
 The following agents are important, but should not block v1.0:

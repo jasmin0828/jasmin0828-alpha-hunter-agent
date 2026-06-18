@@ -197,6 +197,28 @@ The future evaluation-loop architecture is described in
 The HarnessX-inspired architecture reference is described in
 `docs/harnessx_inspired_architecture.md`.
 
+Context Selection Layer: future layer for selecting the smallest sufficient
+context for each agent run, using provenance, supersession, relevance scoring,
+and deliberate forgetting. See `docs/future_context_selection_layer.md`.
+
+### Future Learning Architecture
+
+The Inner Loop / Outer Loop self-improvement architecture is described in
+`docs/future_skill_self_improvement_loop.md`.
+
+It defines a future path from:
+
+```text
+Discover Alpha
+-> Remember Alpha
+-> Evaluate Alpha
+-> Learn Alpha
+```
+
+This is not part of the v1.1 runtime. It is planning only and a candidate for
+v1.2 / v2.0 architecture after enough memory archives, human review feedback,
+outcome observations, and evaluation records exist.
+
 That document defines the planned path from:
 
 ```text
