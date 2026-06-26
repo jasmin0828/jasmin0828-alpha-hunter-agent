@@ -60,6 +60,14 @@ The v1.1 safety boundary remains unchanged:
 - no swap execution
 - no buy/sell recommendations
 
+The v1.1 Observation Upgrade is documented in `docs/observation_upgrade.md`.
+It adds run-log visibility, discovery-stage outcome placeholders, dashboard
+Observation Summary, and Daily Brief Observation Summary.
+
+This is not a Learning Phase, not Evaluation Loop runtime, and not activation
+of Verifier Agent, Thesis Challenge Agent, Skill System, or self-improvement
+runtime.
+
 The next stage is not to keep adding more agents. The priority is to turn the
 existing agents into durable loops that can run repeatedly, be observed, be
 reviewed, and improve over time.

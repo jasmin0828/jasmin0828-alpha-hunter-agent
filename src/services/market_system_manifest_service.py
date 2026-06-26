@@ -36,6 +36,8 @@ class MarketSystemManifestService:
         snapshots: pd.DataFrame,
         signal_events: pd.DataFrame | None = None,
         signal_quality: dict[str, Any] | None = None,
+        scan_run: dict[str, Any] | None = None,
+        recent_scan_runs: pd.DataFrame | None = None,
     ) -> dict[str, Any]:
         """Persist latest scan metadata for dashboard, audit, and memory workflows."""
         ensure_project_directories()
@@ -60,6 +62,7 @@ class MarketSystemManifestService:
                 "future_trade_layer_enabled": False,
             },
             "scan_summary": self._scan_summary(snapshots, signal_events),
+            "observation_summary": self._observation_summary(scan_run, recent_scan_runs),
             "signal_quality": signal_quality or {},
             "data_checksum": self._checksum(snapshots),
         }
@@ -81,6 +84,7 @@ class MarketSystemManifestService:
                 "alert_distribution": {},
                 "narrative_distribution": {},
                 "age_distribution": {},
+                "chain_distribution": {},
             }
 
         alert_mask = snapshots.get("alert_level", pd.Series(dtype="object")).isin(["CRITICAL", "HIGH", "WATCH"])
@@ -98,6 +102,50 @@ class MarketSystemManifestService:
             "alert_distribution": self._counts(snapshots, "alert_level"),
             "narrative_distribution": self._counts(snapshots, "narrative"),
             "age_distribution": self._counts(snapshots, "token_age_bucket"),
+            "chain_distribution": self._counts(snapshots, "chain"),
+        }
+
+    def _observation_summary(
+        self,
+        scan_run: dict[str, Any] | None,
+        recent_scan_runs: pd.DataFrame | None,
+    ) -> dict[str, Any]:
+        """Summarize run-log health for the Observation Phase."""
+        latest = scan_run or {}
+        if recent_scan_runs is None or recent_scan_runs.empty:
+            return {
+                "window_days": 7,
+                "total_runs": 0,
+                "successful_runs": 0,
+                "failed_runs": 0,
+                "tokens_scanned": 0,
+                "signals_found": 0,
+                "chain_distribution": {},
+                "latest_run": latest,
+            }
+
+        runs = recent_scan_runs.copy()
+        status = runs.get("status", pd.Series(dtype="object")).fillna("unknown").astype(str).str.lower()
+        tokens = pd.to_numeric(runs.get("tokens_scanned", runs.get("token_count", 0)), errors="coerce").fillna(0)
+        signals = pd.to_numeric(runs.get("signals_found", 0), errors="coerce").fillna(0)
+
+        chain_distribution: dict[str, int] = {}
+        if "scanned_chains" in runs.columns:
+            for value in runs["scanned_chains"].fillna(""):
+                for chain in str(value).split(","):
+                    normalized = chain.strip().lower()
+                    if normalized:
+                        chain_distribution[normalized] = chain_distribution.get(normalized, 0) + 1
+
+        return {
+            "window_days": 7,
+            "total_runs": int(len(runs)),
+            "successful_runs": int((status == "completed").sum()),
+            "failed_runs": int((status == "failed").sum()),
+            "tokens_scanned": int(tokens.sum()),
+            "signals_found": int(signals.sum()),
+            "chain_distribution": chain_distribution,
+            "latest_run": latest,
         }
 
     def _counts(self, snapshots: pd.DataFrame, column: str) -> dict[str, int]:

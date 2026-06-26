@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from time import monotonic
 
 import pandas as pd
 
@@ -57,6 +58,15 @@ def load_fallback_tokens(service: AlphaTokenService, store: SQLiteStore) -> pd.D
     return pd.DataFrame()
 
 
+def _scanned_chains(current_snapshots: pd.DataFrame, top_tokens: pd.DataFrame) -> list[str]:
+    """Return normalized chain names observed in the current run."""
+    source = current_snapshots if "chain" in current_snapshots.columns else top_tokens
+    if source.empty or "chain" not in source.columns:
+        return []
+    chains = source["chain"].fillna("unknown").astype(str).str.lower()
+    return sorted(chain for chain in chains.unique().tolist() if chain)
+
+
 def run_agent() -> None:
     """Run one complete alpha-token scan and save CSV plus SQLite history."""
     logger = logging.getLogger(__name__)
@@ -81,65 +91,101 @@ def run_agent() -> None:
     if outcome_count:
         logger.info("Updated %s signal event outcomes", outcome_count)
     scan_run_id = store.create_scan_run()
+    run_started = monotonic()
+    scan_errors: list[str] = []
+    saved_count = 0
 
     try:
-        top_tokens = service.find_and_save_top_tokens()
+        try:
+            top_tokens = service.find_and_save_top_tokens()
+        except Exception as exc:
+            message = f"DexScreener scan failed; fallback attempted: {exc}"
+            scan_errors.append(message)
+            logger.warning("DexScreener scan failed; attempting fallback data load: %s", exc)
+            top_tokens = load_fallback_tokens(service, store)
+
+        saved_count = store.save_token_snapshots(scan_run_id, top_tokens)
+        all_snapshots = store.load_snapshots()
+        if top_tokens.empty or "token_address" not in top_tokens.columns:
+            pipeline_snapshots = all_snapshots[all_snapshots["scan_run_id"] == scan_run_id].copy()
+        else:
+            if "chain" not in top_tokens.columns:
+                top_tokens["chain"] = "unknown"
+            if "chain" not in all_snapshots.columns:
+                all_snapshots["chain"] = "unknown"
+            active_token_keys = top_tokens.dropna(subset=["token_address"]).copy()
+            active_keys = set(
+                zip(
+                    active_token_keys["chain"].fillna("unknown").astype(str).str.lower(),
+                    active_token_keys["token_address"].astype(str),
+                )
+            )
+            snapshot_keys = list(
+                zip(
+                    all_snapshots["chain"].fillna("unknown").astype(str).str.lower(),
+                    all_snapshots["token_address"].astype(str),
+                )
+            )
+            pipeline_snapshots = all_snapshots[pd.Series(snapshot_keys, index=all_snapshots.index).isin(active_keys)].copy()
+
+        trend_snapshots = trend_service.calculate_trends(pipeline_snapshots)
+        current_trend_snapshots = trend_snapshots[trend_snapshots["scan_run_id"] == scan_run_id].copy()
+        store.update_trend_metrics(current_trend_snapshots)
+        enriched_snapshots = narrative_service.classify_tokens(trend_snapshots)
+        enriched_snapshots = smart_money_service.analyze_tokens(enriched_snapshots)
+        current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
+        store.update_intelligence_metrics(current_enriched_snapshots)
+        enriched_snapshots = token_age_service.analyze_tokens(enriched_snapshots)
+        current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
+        store.update_token_age_metrics(current_enriched_snapshots)
+        enriched_snapshots = risk_intelligence_service.analyze_tokens(enriched_snapshots)
+        current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
+        store.update_risk_intelligence_metrics(current_enriched_snapshots)
+        enriched_snapshots = signal_calibration_service.calibrate_tokens(enriched_snapshots)
+        current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
+        store.update_signal_calibration_metrics(current_enriched_snapshots)
+        enriched_snapshots = early_alpha_service.analyze_tokens(enriched_snapshots)
+        current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
+        store.update_early_alpha_metrics(current_enriched_snapshots)
+        enriched_snapshots = signal_calibration_service.calibrate_tokens(enriched_snapshots)
+        current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
+        store.update_signal_calibration_metrics(current_enriched_snapshots)
+        current_snapshots = store.load_scan_snapshots(scan_run_id)
+        current_snapshots.to_csv(service.csv_path, index=False)
+        signal_events = store.create_signal_events(scan_run_id, current_snapshots)
+        scanned_chains = _scanned_chains(current_snapshots, top_tokens)
+        duration_seconds = round(monotonic() - run_started, 2)
+        store.finish_scan_run(
+            scan_run_id,
+            "completed",
+            saved_count,
+            scanned_chains=scanned_chains,
+            signals_found=len(signal_events),
+            errors=scan_errors,
+            duration_seconds=duration_seconds,
+        )
     except Exception as exc:
-        logger.warning("DexScreener scan failed; attempting fallback data load: %s", exc)
-        top_tokens = load_fallback_tokens(service, store)
-
-    saved_count = store.save_token_snapshots(scan_run_id, top_tokens)
-    all_snapshots = store.load_snapshots()
-    if top_tokens.empty or "token_address" not in top_tokens.columns:
-        pipeline_snapshots = all_snapshots[all_snapshots["scan_run_id"] == scan_run_id].copy()
-    else:
-        if "chain" not in top_tokens.columns:
-            top_tokens["chain"] = "unknown"
-        if "chain" not in all_snapshots.columns:
-            all_snapshots["chain"] = "unknown"
-        active_token_keys = top_tokens.dropna(subset=["token_address"]).copy()
-        active_keys = set(
-            zip(
-                active_token_keys["chain"].fillna("unknown").astype(str).str.lower(),
-                active_token_keys["token_address"].astype(str),
-            )
+        scan_errors.append(str(exc))
+        store.finish_scan_run(
+            scan_run_id,
+            "failed",
+            saved_count,
+            errors=scan_errors,
+            duration_seconds=round(monotonic() - run_started, 2),
         )
-        snapshot_keys = list(
-            zip(
-                all_snapshots["chain"].fillna("unknown").astype(str).str.lower(),
-                all_snapshots["token_address"].astype(str),
-            )
-        )
-        pipeline_snapshots = all_snapshots[pd.Series(snapshot_keys, index=all_snapshots.index).isin(active_keys)].copy()
+        raise
 
-    trend_snapshots = trend_service.calculate_trends(pipeline_snapshots)
-    current_trend_snapshots = trend_snapshots[trend_snapshots["scan_run_id"] == scan_run_id].copy()
-    store.update_trend_metrics(current_trend_snapshots)
-    enriched_snapshots = narrative_service.classify_tokens(trend_snapshots)
-    enriched_snapshots = smart_money_service.analyze_tokens(enriched_snapshots)
-    current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
-    store.update_intelligence_metrics(current_enriched_snapshots)
-    enriched_snapshots = token_age_service.analyze_tokens(enriched_snapshots)
-    current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
-    store.update_token_age_metrics(current_enriched_snapshots)
-    enriched_snapshots = risk_intelligence_service.analyze_tokens(enriched_snapshots)
-    current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
-    store.update_risk_intelligence_metrics(current_enriched_snapshots)
-    enriched_snapshots = signal_calibration_service.calibrate_tokens(enriched_snapshots)
-    current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
-    store.update_signal_calibration_metrics(current_enriched_snapshots)
-    enriched_snapshots = early_alpha_service.analyze_tokens(enriched_snapshots)
-    current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
-    store.update_early_alpha_metrics(current_enriched_snapshots)
-    enriched_snapshots = signal_calibration_service.calibrate_tokens(enriched_snapshots)
-    current_enriched_snapshots = enriched_snapshots[enriched_snapshots["scan_run_id"] == scan_run_id].copy()
-    store.update_signal_calibration_metrics(current_enriched_snapshots)
-    store.finish_scan_run(scan_run_id, "completed", saved_count)
-    current_snapshots = store.load_scan_snapshots(scan_run_id)
-    current_snapshots.to_csv(service.csv_path, index=False)
-    signal_events = store.create_signal_events(scan_run_id, current_snapshots)
+    scan_run = store.load_scan_run(scan_run_id)
+    recent_scan_runs = store.load_recent_scan_runs(days=7)
     signal_quality = signal_quality_service.summarize(current_snapshots, signal_events)
-    manifest = manifest_service.write_scan_manifest(scan_run_id, current_snapshots, signal_events, signal_quality)
+    manifest = manifest_service.write_scan_manifest(
+        scan_run_id,
+        current_snapshots,
+        signal_events,
+        signal_quality,
+        scan_run=scan_run,
+        recent_scan_runs=recent_scan_runs,
+    )
     logger.info("Alpha Hunter Market System Manifest:\n%s", manifest["scan_summary"])
     logger.info("Signal Quality Summary:\n%s", signal_quality)
     brief_path = daily_brief_service.write_daily_brief(scan_run_id, current_snapshots, signal_events, manifest)

@@ -35,10 +35,17 @@ class SQLiteStore:
                 """
                 CREATE TABLE IF NOT EXISTS scan_runs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT,
                     started_at TEXT NOT NULL,
                     completed_at TEXT,
+                    finished_at TEXT,
                     status TEXT NOT NULL,
-                    token_count INTEGER NOT NULL DEFAULT 0
+                    token_count INTEGER NOT NULL DEFAULT 0,
+                    scanned_chains TEXT DEFAULT '',
+                    tokens_scanned INTEGER NOT NULL DEFAULT 0,
+                    signals_found INTEGER NOT NULL DEFAULT 0,
+                    errors TEXT DEFAULT '',
+                    duration_seconds REAL DEFAULT 0
                 )
                 """
             )
@@ -97,6 +104,12 @@ class SQLiteStore:
                     consecutive_up_count INTEGER DEFAULT 0,
                     early_alpha_score REAL DEFAULT 0,
                     early_alpha_reason TEXT DEFAULT '',
+                    price_at_discovery REAL,
+                    price_24h REAL,
+                    price_72h REAL,
+                    price_7d REAL,
+                    outcome_status TEXT DEFAULT 'PENDING',
+                    outcome_checked_at TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (scan_run_id) REFERENCES scan_runs(id)
                 )
@@ -144,6 +157,11 @@ class SQLiteStore:
                     outcome_4h_price_change REAL,
                     outcome_1h_volume_change REAL,
                     outcome_1h_early_alpha_change REAL,
+                    price_at_discovery REAL,
+                    price_24h REAL,
+                    price_72h REAL,
+                    price_7d REAL,
+                    outcome_checked_at TEXT,
                     outcome_status TEXT DEFAULT 'PENDING',
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (scan_run_id) REFERENCES scan_runs(id),
@@ -151,9 +169,29 @@ class SQLiteStore:
                 )
                 """
             )
+            self._ensure_scan_run_columns(conn)
             self._ensure_trend_columns(conn)
             self._ensure_signal_event_columns(conn)
         self.logger.info("Initialized SQLite database at %s", self.db_path)
+
+    def _ensure_scan_run_columns(self, conn: sqlite3.Connection) -> None:
+        """Add v1.1 Observation run-log columns to existing scan_runs tables."""
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(scan_runs)").fetchall()
+        }
+        migrations = {
+            "run_id": "TEXT",
+            "finished_at": "TEXT",
+            "scanned_chains": "TEXT DEFAULT ''",
+            "tokens_scanned": "INTEGER NOT NULL DEFAULT 0",
+            "signals_found": "INTEGER NOT NULL DEFAULT 0",
+            "errors": "TEXT DEFAULT ''",
+            "duration_seconds": "REAL DEFAULT 0",
+        }
+        for column, definition in migrations.items():
+            if column not in columns:
+                conn.execute(f"ALTER TABLE scan_runs ADD COLUMN {column} {definition}")
 
     def _ensure_trend_columns(self, conn: sqlite3.Connection) -> None:
         """Add v0.7-v1.0 columns when upgrading an existing database."""
@@ -197,6 +235,12 @@ class SQLiteStore:
             "consecutive_up_count": "INTEGER DEFAULT 0",
             "early_alpha_score": "REAL DEFAULT 0",
             "early_alpha_reason": "TEXT DEFAULT ''",
+            "price_at_discovery": "REAL",
+            "price_24h": "REAL",
+            "price_72h": "REAL",
+            "price_7d": "REAL",
+            "outcome_status": "TEXT DEFAULT 'PENDING'",
+            "outcome_checked_at": "TEXT",
         }
         for column, definition in migrations.items():
             if column not in columns:
@@ -215,6 +259,11 @@ class SQLiteStore:
             "outcome_4h_price_change": "REAL",
             "outcome_1h_volume_change": "REAL",
             "outcome_1h_early_alpha_change": "REAL",
+            "price_at_discovery": "REAL",
+            "price_24h": "REAL",
+            "price_72h": "REAL",
+            "price_7d": "REAL",
+            "outcome_checked_at": "TEXT",
             "outcome_status": "TEXT DEFAULT 'PENDING'",
         }
         for column, definition in migrations.items():
@@ -226,10 +275,15 @@ class SQLiteStore:
         started_at = self._now()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "INSERT INTO scan_runs (started_at, status) VALUES (?, ?)",
-                (started_at, "running"),
+                "INSERT INTO scan_runs (run_id, started_at, status) VALUES (?, ?, ?)",
+                ("", started_at, "running"),
             )
-            return int(cursor.lastrowid)
+            scan_run_id = int(cursor.lastrowid)
+            conn.execute(
+                "UPDATE scan_runs SET run_id = ? WHERE id = ?",
+                (f"scan-{scan_run_id}", scan_run_id),
+            )
+            return scan_run_id
 
     def save_token_snapshots(self, scan_run_id: int, tokens: pd.DataFrame) -> int:
         """Append token snapshots for the current scan run."""
@@ -246,24 +300,87 @@ class SQLiteStore:
                     contract_address, price_usd,
                     liquidity_usd, volume_24h, price_change_24h, fdv, market_cap,
                     pair_created_at, alpha_score, risk_score, ai_summary, dex, url,
-                    pair_url, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pair_url, price_at_discovery, outcome_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
         self.logger.info("Saved %s token snapshots to SQLite", len(rows))
         return len(rows)
 
-    def finish_scan_run(self, scan_run_id: int, status: str, token_count: int) -> None:
+    def finish_scan_run(
+        self,
+        scan_run_id: int,
+        status: str,
+        token_count: int,
+        scanned_chains: list[str] | None = None,
+        signals_found: int = 0,
+        errors: list[str] | None = None,
+        duration_seconds: float | None = None,
+    ) -> None:
         """Mark a scan run as completed or failed."""
+        finished_at = self._now()
+        chain_text = ",".join(scanned_chains or [])
+        error_text = "\n".join(errors or [])
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
                 UPDATE scan_runs
-                SET completed_at = ?, status = ?, token_count = ?
+                SET completed_at = ?,
+                    finished_at = ?,
+                    status = ?,
+                    token_count = ?,
+                    tokens_scanned = ?,
+                    scanned_chains = ?,
+                    signals_found = ?,
+                    errors = ?,
+                    duration_seconds = ?
                 WHERE id = ?
                 """,
-                (self._now(), status, token_count, scan_run_id),
+                (
+                    finished_at,
+                    finished_at,
+                    status,
+                    token_count,
+                    token_count,
+                    chain_text,
+                    int(signals_found or 0),
+                    error_text,
+                    float(duration_seconds or 0),
+                    scan_run_id,
+                ),
+            )
+
+    def load_scan_run(self, scan_run_id: int) -> dict[str, Any]:
+        """Load one scan run as a dict for manifest/report summaries."""
+        if not self.db_path.exists():
+            return {}
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT *
+                FROM scan_runs
+                WHERE id = ?
+                """,
+                (scan_run_id,),
+            ).fetchone()
+        return dict(row) if row else {}
+
+    def load_recent_scan_runs(self, days: int = 7) -> pd.DataFrame:
+        """Load recent scan run logs for observation dashboard summaries."""
+        if not self.db_path.exists():
+            return pd.DataFrame()
+        with sqlite3.connect(self.db_path) as conn:
+            return pd.read_sql_query(
+                """
+                SELECT *
+                FROM scan_runs
+                WHERE datetime(started_at) >= datetime('now', ?)
+                ORDER BY started_at DESC, id DESC
+                """,
+                conn,
+                params=(f"-{int(days)} days",),
             )
 
     def load_snapshots(self) -> pd.DataFrame:
@@ -516,9 +633,9 @@ class SQLiteStore:
                         previous_alert_level, alert_level, event_type, early_alpha_score,
                         agent_score, price_usd, volume_24h, liquidity_usd, token_age_bucket,
                         rug_risk_level, consecutive_up_count, early_alpha_reason,
-                        alert_reason, created_at
+                        alert_reason, price_at_discovery, created_at
                     ) VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                     """,
                     [
@@ -542,6 +659,7 @@ class SQLiteStore:
                             event["consecutive_up_count"],
                             event["early_alpha_reason"],
                             event["alert_reason"],
+                            event["price_at_discovery"],
                             event["created_at"],
                         )
                         for event in events
@@ -616,7 +734,8 @@ class SQLiteStore:
                     outcome_4h_price_change = ?,
                     outcome_1h_volume_change = ?,
                     outcome_1h_early_alpha_change = ?,
-                    outcome_status = ?
+                    outcome_status = ?,
+                    outcome_checked_at = ?
                 WHERE id = ?
                 """,
                 outcome_rows,
@@ -648,6 +767,8 @@ class SQLiteStore:
             self._value(row, "dex"),
             self._value(row, "url"),
             self._value(row, "pair_url") or self._value(row, "url"),
+            self._number(row, "price_usd"),
+            "PENDING",
             created_at,
         )
 
@@ -748,6 +869,7 @@ class SQLiteStore:
             "price_usd": self._number(token, "price_usd"),
             "volume_24h": self._number(token, "volume_24h"),
             "liquidity_usd": self._number(token, "liquidity_usd"),
+            "price_at_discovery": self._number(token, "price_usd"),
             "token_age_bucket": self._value(token, "token_age_bucket"),
             "rug_risk_level": self._value(token, "rug_risk_level"),
             "consecutive_up_count": int(token.get("consecutive_up_count") or 0),
@@ -805,6 +927,7 @@ class SQLiteStore:
                     volume_1h,
                     early_alpha_1h,
                     status,
+                    self._now(),
                     int(event["id"]),
                 )
             )

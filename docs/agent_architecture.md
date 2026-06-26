@@ -116,6 +116,24 @@ Current multi-chain boundary:
 - no private key storage
 - no swap execution
 
+## v1.1 Observation Upgrade
+
+The v1.1 Observation Upgrade improves run visibility without promoting Alpha
+Hunter into a Learning Phase or Evaluation Loop runtime.
+
+Current observation additions:
+
+- `scan_runs` is reused as the run log for scanner/orchestrator runs.
+- Run-log fields record run id, start/finish time, status, scanned chains,
+  token count, signal count, errors, and duration.
+- Token and signal rows reserve outcome placeholders such as
+  `price_at_discovery`, `price_24h`, `price_72h`, `price_7d`,
+  `outcome_status`, and `outcome_checked_at`.
+- Dashboard and Daily Brief surfaces show Observation Summary.
+
+This does not enable Verifier Agent, Thesis Challenge Agent, Skill System,
+automatic learning, external LLM calls, wallet logic, or trading behavior.
+
 The next stage should not focus on adding more agents. It should focus on making
 the current agents form sustainable operating loops:
 

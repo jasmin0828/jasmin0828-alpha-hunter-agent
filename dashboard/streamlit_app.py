@@ -349,6 +349,26 @@ def load_signal_events(db_path: Path) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=25)
+def load_scan_runs(db_path: Path) -> pd.DataFrame:
+    """Load recent run-log rows for Observation Summary."""
+    if not db_path.exists():
+        return pd.DataFrame()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            return pd.read_sql_query(
+                """
+                SELECT *
+                FROM scan_runs
+                WHERE datetime(started_at) >= datetime('now', '-7 days')
+                ORDER BY started_at DESC, id DESC
+                """,
+                conn,
+            )
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=25)
 def build_core_run_preview() -> dict:
     """Run a dry Core preview without writing reports, memory, or database state."""
     try:
@@ -563,6 +583,62 @@ def render_market_system_manifest(manifest: dict) -> None:
     event_count = int(summary.get("signal_event_count", 0) or 0)
     if event_count == 0:
         st.caption("Telegram quiet: no new signal transition events in the latest scan.")
+
+
+def render_observation_summary(scan_runs: pd.DataFrame, manifest: dict) -> None:
+    """Render recent run-log health for the v1.1 Observation Phase."""
+    st.markdown('<div class="section-title">Observation Summary</div>', unsafe_allow_html=True)
+
+    if scan_runs.empty:
+        observation = manifest.get("observation_summary", {}) if manifest else {}
+        latest = observation.get("latest_run", {})
+        if not observation and not latest:
+            st.info("Observation run log will appear after the next scanner run.")
+            return
+        total_runs = observation.get("total_runs", 0)
+        successful_runs = observation.get("successful_runs", 0)
+        failed_runs = observation.get("failed_runs", 0)
+        tokens_scanned = observation.get("tokens_scanned", 0)
+        signals_found = observation.get("signals_found", 0)
+        chain_distribution = observation.get("chain_distribution", {})
+    else:
+        runs = scan_runs.copy()
+        status = runs.get("status", pd.Series(dtype="object")).fillna("unknown").astype(str).str.lower()
+        tokens = pd.to_numeric(runs.get("tokens_scanned", runs.get("token_count", 0)), errors="coerce").fillna(0)
+        signals = pd.to_numeric(runs.get("signals_found", 0), errors="coerce").fillna(0)
+        total_runs = len(runs)
+        successful_runs = int((status == "completed").sum())
+        failed_runs = int((status == "failed").sum())
+        tokens_scanned = int(tokens.sum())
+        signals_found = int(signals.sum())
+        chain_distribution: dict[str, int] = {}
+        if "scanned_chains" in runs.columns:
+            for value in runs["scanned_chains"].fillna(""):
+                for chain in str(value).split(","):
+                    normalized = chain.strip().lower()
+                    if normalized:
+                        chain_distribution[normalized] = chain_distribution.get(normalized, 0) + 1
+        latest = runs.iloc[0].to_dict()
+
+    col_total, col_success, col_failed, col_tokens, col_signals = st.columns(5)
+    col_total.metric("Runs 7D", total_runs)
+    col_success.metric("Success", successful_runs)
+    col_failed.metric("Failed", failed_runs)
+    col_tokens.metric("Tokens Scanned", tokens_scanned)
+    col_signals.metric("Signals Found", signals_found)
+
+    latest_status = latest.get("status", "unknown") if latest else "unknown"
+    latest_started = latest.get("started_at", "N/A") if latest else "N/A"
+    latest_duration = latest.get("duration_seconds", 0) if latest else 0
+    st.caption(f"Latest run: {latest_status} · started_at={latest_started} · duration={latest_duration}s")
+
+    errors = str(latest.get("errors", "") if latest else "").strip()
+    if errors:
+        st.warning(f"Latest run errors: {errors}")
+
+    if chain_distribution:
+        chain_rows = [{"chain": chain, "run_count": count} for chain, count in sorted(chain_distribution.items())]
+        st.dataframe(pd.DataFrame(chain_rows), width="stretch", hide_index=True)
 
 
 def render_latest_scan_snapshot(df: pd.DataFrame, manifest: dict) -> None:
@@ -1670,6 +1746,7 @@ def render_dashboard() -> None:
     alpha_tokens = load_alpha_tokens(DATA_FILE)
     manifest = load_market_system_manifest(MANIFEST_FILE)
     signal_events = load_signal_events(DB_FILE)
+    scan_runs = load_scan_runs(DB_FILE)
     updated_at = get_data_updated_at(DATA_FILE)
     selected_chain = render_chain_filter(alpha_tokens)
     filtered_tokens = filter_tokens_by_chain(alpha_tokens, selected_chain)
@@ -1680,6 +1757,8 @@ def render_dashboard() -> None:
     render_header(updated_at)
     st.write("")
     render_market_system_manifest(manifest)
+    st.write("")
+    render_observation_summary(scan_runs, manifest)
     st.write("")
     render_metrics(filtered_tokens)
     st.write("")

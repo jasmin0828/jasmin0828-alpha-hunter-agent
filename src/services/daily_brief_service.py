@@ -44,6 +44,8 @@ class DailyBriefService:
     ) -> str:
         generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         summary = manifest.get("scan_summary", {})
+        observation = manifest.get("observation_summary", {})
+        latest_run = observation.get("latest_run", {}) if isinstance(observation, dict) else {}
         lines = [
             "# Alpha Hunter Daily Brief",
             "",
@@ -60,6 +62,17 @@ class DailyBriefService:
             f"- first_seen_count: {summary.get('first_seen_count', 0)}",
             f"- consecutive_momentum_count: {summary.get('consecutive_momentum_count', 0)}",
             f"- max_early_alpha_score: {summary.get('max_early_alpha_score', 0)}",
+            "",
+            "## Observation Summary",
+            "",
+            f"- latest_run_status: {latest_run.get('status', 'unknown')}",
+            f"- started_at: {latest_run.get('started_at', 'N/A')}",
+            f"- finished_at: {latest_run.get('finished_at') or latest_run.get('completed_at', 'N/A')}",
+            f"- scanned_chains: {latest_run.get('scanned_chains', '') or 'N/A'}",
+            f"- tokens_scanned: {latest_run.get('tokens_scanned', latest_run.get('token_count', 0))}",
+            f"- signals_found: {latest_run.get('signals_found', summary.get('signal_event_count', 0))}",
+            f"- duration_seconds: {latest_run.get('duration_seconds', 0)}",
+            f"- errors: {latest_run.get('errors', '') or 'None'}",
             "",
             "## New Signal Events",
             "",
