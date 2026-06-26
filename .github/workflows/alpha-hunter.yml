@@ -2,7 +2,7 @@ name: Alpha Hunter Market System
 
 on:
   schedule:
-    - cron: "3,13,23,33,43,53 * * * *"
+    - cron: "3 */4 * * *"
   workflow_dispatch:
 
 jobs:
