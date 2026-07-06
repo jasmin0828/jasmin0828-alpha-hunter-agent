@@ -25,6 +25,8 @@ AI Trading Agent are its direct subsystems.
 - Tracks signal quality.
 - Supports agent-based analysis.
 - Generates daily alpha reports.
+- Generates a Daily Scan Report: a Chinese read-only scan summary, not market
+  analysis or financial advice.
 - Maintains local memory and research artifacts.
 - Provides a Streamlit dashboard for monitoring.
 - Runs GitHub Actions validation for baseline health checks.
@@ -118,6 +120,9 @@ positives, and deciding any next research steps.
 - Signal outcome tracking for 30m, 1h, and 4h follow-up windows.
 - Signal quality metrics in the runtime manifest and dashboard.
 - Repeated OLD-token WATCH suppression to reduce stale alert noise.
+- Daily Scan Report in `reports/daily_scan_report.md`: Chinese read-only scan
+  summary of run logs, chain coverage, token counts, signal counts, and theme
+  distribution. It is not investment advice or market analysis.
 - Daily brief markdown output in `memory/daily/`.
 - Obsidian-ready token, narrative, and signal-quality notes in `memory/`.
 - Content drafts in `content/x/` and `content/notes/`.
