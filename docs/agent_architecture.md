@@ -276,6 +276,11 @@ Current learning boundary:
 
 Additional future architecture notes:
 
+- `docs/observation_review.md`: v1.1 Observation Review after roughly half a
+  month of runtime, with stability, coverage, signal-quality, theme-discovery,
+  performance, and daily-report reliability review.
+- `docs/future_outcome_evaluation_layer.md`: future Outcome Evaluation Layer
+  for tracking signal results across 24h, 3d, 7d, and 30d review windows.
 - `docs/future_context_selection_layer.md`: future Context Selection Layer for
   selecting the smallest sufficient context for each agent run using
   provenance, supersession, relevance scoring, and deliberate forgetting.
@@ -286,6 +291,38 @@ Additional future architecture notes:
 This reference is not part of the v1.1 runtime. It does not change `main.py`,
 agent execution, database schema, dashboard behavior, scheduler behavior,
 Telegram behavior, API behavior, or any trading-related logic.
+
+### Outcome Evaluation Layer
+
+Outcome Evaluation is a future architecture reference. It is not implemented in
+the v1.1 runtime.
+
+It sits after scanner and signal discovery, but before memory-driven learning
+or adaptability:
+
+```text
+Market Data
+-> Scanner
+-> Signal Discovery
+-> Evidence Grading
+-> Outcome Evaluation
+-> Memory / STATE Store
+-> Learning Loop
+-> Adaptability Layer
+```
+
+Purpose:
+
+- preserve what happened after a signal was discovered
+- compare original evidence with later market behavior
+- store review-window outcomes such as 24h, 3d, 7d, and 30d
+- prepare durable ground-truth data before any Verifier Agent or Loss Function
+  Engine is enabled
+
+The layer should support a future `alpha_signal_outcomes` table or equivalent
+store, but no production migration is applied in v1.1. It must remain
+read-only and must not trigger trading, wallet connection, private-key
+handling, swaps, automatic scoring changes, or external LLM runtime.
 
 ## Future Self-Improvement Layer
 

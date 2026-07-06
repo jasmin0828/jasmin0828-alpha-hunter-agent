@@ -64,6 +64,10 @@ The v1.1 Observation Upgrade is documented in `docs/observation_upgrade.md`.
 It adds run-log visibility, discovery-stage outcome placeholders, dashboard
 Observation Summary, and Daily Brief Observation Summary.
 
+The v1.1 Observation Review is documented in `docs/observation_review.md`.
+It reviews roughly half a month of live runtime and prepares the next planning
+step: Outcome Tracking, Ground Truth Store, and Evaluation Phase design.
+
 This is not a Learning Phase, not Evaluation Loop runtime, and not activation
 of Verifier Agent, Thesis Challenge Agent, Skill System, or self-improvement
 runtime.
@@ -202,6 +206,9 @@ and rule quality. Stage 3 is Future / Not implemented in v1.x.
 The future evaluation-loop architecture is described in
 `docs/future_architecture_evaluation_loop.md`.
 
+The future Outcome Evaluation Layer is described in
+`docs/future_outcome_evaluation_layer.md`.
+
 The HarnessX-inspired architecture reference is described in
 `docs/harnessx_inspired_architecture.md`.
 
@@ -226,6 +233,45 @@ Discover Alpha
 This is not part of the v1.1 runtime. It is planning only and a candidate for
 v1.2 / v2.0 architecture after enough memory archives, human review feedback,
 outcome observations, and evaluation records exist.
+
+### Observation Review Completed / Evaluation Phase Preparation
+
+Alpha Hunter has completed a v1.1 Observation Review after roughly half a month
+of live runtime.
+
+Current decision:
+
+- v1.1 remains Observation Phase runtime.
+- trading remains disabled.
+- wallet connection remains absent.
+- private-key handling remains absent.
+- automated execution remains absent.
+- external LLM runtime remains absent.
+
+The next stage should shift from only discovering signals to verifying signals:
+
+```text
+Discovery
+-> Signal Record
+-> Outcome Tracking
+-> Ground Truth Store
+-> Evaluation Loop
+```
+
+Evaluation Phase is a v1.2 planning foundation. It should collect outcome data
+before any Loss Function, Verifier Agent, Thesis Challenge Agent,
+Self-Improvement Loop, or Adaptability Layer is implemented.
+
+Outcome data should become the evidence base for:
+
+- Loss Function Engine
+- Verifier Agent
+- Thesis Challenge Agent
+- Self-Improvement Loop
+- Adaptability Layer
+
+This preparation does not change the current scanner, report generator,
+dashboard behavior, GitHub Actions, Telegram behavior, or database runtime.
 
 That document defines the planned path from:
 
