@@ -7,8 +7,11 @@ and it never executes trades.
 from __future__ import annotations
 
 import logging
+import json
 import os
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from time import monotonic
 
 import pandas as pd
@@ -67,7 +70,38 @@ def _scanned_chains(current_snapshots: pd.DataFrame, top_tokens: pd.DataFrame) -
     return sorted(chain for chain in chains.unique().tolist() if chain)
 
 
-def run_agent() -> None:
+def _artifact_references(*values: object) -> list[str]:
+    references: list[str] = []
+    for value in values:
+        items = value.values() if isinstance(value, dict) else [value]
+        for item in items:
+            if isinstance(item, Path) and item.exists():
+                reference = str(item.resolve())
+                if reference not in references:
+                    references.append(reference)
+    return references
+
+
+def _write_execution_summary(
+    *, scan_run_id: int, output_references: list[str], warnings: list[dict[str, object]],
+    fallbacks: list[dict[str, object]], delivery_results: list[dict[str, object]],
+) -> dict[str, object]:
+    summary_path = Path("data/aios_execution_summary.json").resolve()
+    summary = {
+        "implementation_status": "completed",
+        "scan_run_id": scan_run_id,
+        "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "output_references": output_references,
+        "warnings": warnings,
+        "fallbacks": fallbacks,
+        "delivery_results": delivery_results,
+    }
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
+
+
+def run_agent() -> dict[str, object]:
     """Run one complete alpha-token scan and save CSV plus SQLite history."""
     logger = logging.getLogger(__name__)
     service = AlphaTokenService()
@@ -93,6 +127,8 @@ def run_agent() -> None:
     scan_run_id = store.create_scan_run()
     run_started = monotonic()
     scan_errors: list[str] = []
+    fallbacks: list[dict[str, object]] = []
+    delivery_results: list[dict[str, object]] = []
     saved_count = 0
 
     try:
@@ -101,6 +137,12 @@ def run_agent() -> None:
         except Exception as exc:
             message = f"DexScreener scan failed; fallback attempted: {exc}"
             scan_errors.append(message)
+            fallbacks.append({
+                "code": "DEXSCREENER_SCAN_FALLBACK",
+                "message": "DexScreener scan failed; persisted fallback data was attempted",
+                "source": "main.run_agent",
+                "fatal": False,
+            })
             logger.warning("DexScreener scan failed; attempting fallback data load: %s", exc)
             top_tokens = load_fallback_tokens(service, store)
 
@@ -197,9 +239,15 @@ def run_agent() -> None:
 
     if top_tokens.empty:
         logger.info("No tokens matched the current filters")
-        notifier.notify_health_status(current_snapshots, manifest, "no tokens matched current filters")
-        notify_due_reports(notifier, report_notification_service)
-        return
+        delivery_results.append(notifier.capture_delivery(
+            "health", lambda: notifier.notify_health_status(current_snapshots, manifest, "no tokens matched current filters")
+        ))
+        delivery_results.extend(notify_due_reports(notifier, report_notification_service))
+        outputs = _artifact_references(service.csv_path, manifest_service.manifest_path, brief_path, content_paths, memory_paths)
+        return _write_execution_summary(
+            scan_run_id=scan_run_id, output_references=outputs, warnings=service.diagnostics,
+            fallbacks=fallbacks, delivery_results=delivery_results,
+        )
 
     heating_tokens = current_snapshots[current_snapshots["momentum_status"] == "HEATING_UP"]
     if heating_tokens.empty:
@@ -295,32 +343,40 @@ def run_agent() -> None:
     if signal_events.empty:
         alert_tokens = current_snapshots.head(0)
         logger.info("No new signal events for Telegram after deduplication")
-        notifier.notify_health_status(current_snapshots, manifest, "no new signal events after deduplication")
+        delivery_results.append(notifier.capture_delivery(
+            "health", lambda: notifier.notify_health_status(current_snapshots, manifest, "no new signal events after deduplication")
+        ))
     else:
         event_ids = set(signal_events["token_snapshot_id"].astype(int))
         alert_tokens = current_snapshots[current_snapshots["id"].astype(int).isin(event_ids)].copy()
         event_context = signal_events.set_index("token_snapshot_id")[["previous_alert_level", "event_type"]]
         alert_tokens = alert_tokens.join(event_context, on="id")
-    try:
-        notifier.notify_top_tokens(alert_tokens)
-    except Exception:
-        logger.exception("Telegram notification failed")
-    notify_due_reports(notifier, report_notification_service)
+    delivery_results.append(notifier.capture_delivery("signals", lambda: notifier.notify_top_tokens(alert_tokens)))
+    delivery_results.extend(notify_due_reports(notifier, report_notification_service))
+    outputs = _artifact_references(service.csv_path, manifest_service.manifest_path, brief_path, content_paths, memory_paths)
+    return _write_execution_summary(
+        scan_run_id=scan_run_id, output_references=outputs, warnings=service.diagnostics,
+        fallbacks=fallbacks, delivery_results=delivery_results,
+    )
 
 
-def notify_due_reports(notifier: TelegramNotifier, report_service: ReportNotificationService) -> None:
+def notify_due_reports(notifier: TelegramNotifier, report_service: ReportNotificationService) -> list[dict[str, object]]:
     """Send scheduled Telegram reports after a scan has refreshed the database."""
     logger = logging.getLogger(__name__)
+    results: list[dict[str, object]] = []
     if os.getenv("GITHUB_ACTIONS") == "true":
         logger.info("Telegram scheduled reports skipped in GitHub Actions")
-        return
+        return results
 
     for report in report_service.due_reports():
-        try:
-            notifier.notify_report(report.message, report.report_type)
+        result = notifier.capture_delivery(
+            report.report_type,
+            lambda report=report: notifier.notify_report(report.message, report.report_type),
+        )
+        results.append(result)
+        if result["status"] == "succeeded":
             report_service.mark_sent(report)
-        except Exception:
-            logger.exception("Telegram %s report failed", report.report_type)
+    return results
 
 
 def run_scheduled_scan() -> None:

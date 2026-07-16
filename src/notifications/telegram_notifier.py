@@ -7,7 +7,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 import requests
@@ -46,49 +46,50 @@ class TelegramNotifier:
         self.healthcheck_interval = timedelta(hours=healthcheck_interval_hours)
         self.session = requests.Session()
 
-    def notify_top_tokens(self, tokens: pd.DataFrame) -> None:
+    def notify_top_tokens(self, tokens: pd.DataFrame) -> dict[str, Any]:
         """Send a Telegram message for v1.2 signal transition events."""
         if not self.enabled:
             self.logger.info("Telegram notification is disabled")
-            return
+            return self._delivery_result("signals", False, False, "disabled")
 
         if not self.bot_token or not self.chat_id:
             self.logger.warning("Telegram notification skipped because bot token or chat ID is missing")
-            return
+            return self._delivery_result("signals", False, False, "not_configured")
 
         alert_tokens = self._filter_calibrated_alert_tokens(tokens)
         if alert_tokens.empty:
             self.logger.info("Telegram notification skipped because there are no Top tokens")
-            return
+            return self._delivery_result("signals", True, False, "not_attempted")
 
         message = self._format_top_tokens_message(alert_tokens)
         for chunk in self._split_message(message):
             self._send_message(chunk)
 
         self.logger.info("Telegram notification sent for %s Top tokens", len(alert_tokens))
+        return self._delivery_result("signals", True, True, "succeeded")
 
-    def notify_health_status(self, snapshots: pd.DataFrame, manifest: dict[str, Any], reason: str) -> None:
+    def notify_health_status(self, snapshots: pd.DataFrame, manifest: dict[str, Any], reason: str) -> dict[str, Any]:
         """Send a low-frequency heartbeat when scans are healthy but quiet."""
         if os.getenv("GITHUB_ACTIONS") == "true":
             self.logger.info("Telegram health check skipped in GitHub Actions")
-            return
+            return self._delivery_result("health", bool(self.bot_token and self.chat_id), False, "not_attempted")
 
         if not self.healthcheck_enabled:
             self.logger.info("Telegram health check is disabled")
-            return
+            return self._delivery_result("health", bool(self.bot_token and self.chat_id), False, "disabled")
 
         if not self.enabled:
             self.logger.info("Telegram health check skipped because Telegram is disabled")
-            return
+            return self._delivery_result("health", bool(self.bot_token and self.chat_id), False, "disabled")
 
         if not self.bot_token or not self.chat_id:
             self.logger.warning("Telegram health check skipped because bot token or chat ID is missing")
-            return
+            return self._delivery_result("health", False, False, "not_configured")
 
         now = datetime.now(timezone.utc)
         if not self._should_send_healthcheck(now):
             self.logger.info("Telegram health check skipped because interval has not elapsed")
-            return
+            return self._delivery_result("health", True, False, "not_attempted")
 
         message = self._format_health_status_message(snapshots, manifest, reason, now)
         for chunk in self._split_message(message):
@@ -96,21 +97,45 @@ class TelegramNotifier:
 
         self._write_healthcheck_state(now)
         self.logger.info("Telegram health check sent")
+        return self._delivery_result("health", True, True, "succeeded")
 
-    def notify_report(self, message: str, report_type: str) -> None:
+    def notify_report(self, message: str, report_type: str) -> dict[str, Any]:
         """Send a scheduled daily or weekly report."""
         if not self.enabled:
             self.logger.info("Telegram %s report skipped because Telegram is disabled", report_type)
-            return
+            return self._delivery_result(report_type, bool(self.bot_token and self.chat_id), False, "disabled")
 
         if not self.bot_token or not self.chat_id:
             self.logger.warning("Telegram %s report skipped because bot token or chat ID is missing", report_type)
-            return
+            return self._delivery_result(report_type, False, False, "not_configured")
 
         for chunk in self._split_message(message):
             self._send_message(chunk)
 
         self.logger.info("Telegram %s report sent", report_type)
+        return self._delivery_result(report_type, True, True, "succeeded")
+
+    @staticmethod
+    def _delivery_result(message_type: str, configured: bool, attempted: bool, status: str) -> dict[str, Any]:
+        return {
+            "channel": "telegram",
+            "message_type": message_type,
+            "configured": configured,
+            "attempted": attempted,
+            "status": status,
+            "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "error": None,
+        }
+
+    def capture_delivery(self, message_type: str, operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Convert a caught Telegram exception into secret-free delivery evidence."""
+        try:
+            return operation()
+        except Exception as exc:  # noqa: BLE001 - delivery remains optional but observable.
+            self.logger.exception("Telegram %s delivery failed", message_type)
+            result = self._delivery_result(message_type, bool(self.bot_token and self.chat_id), True, "failed")
+            result["error"] = type(exc).__name__
+            return result
 
     def _filter_calibrated_alert_tokens(self, tokens: pd.DataFrame) -> pd.DataFrame:
         """Keep CRITICAL, HIGH, and WATCH alerts sorted by early alpha score."""

@@ -64,16 +64,24 @@ class AlphaTokenService:
         self.client = client or DexScreenerClient()
         self.analyzer = analyzer or AlphaAnalyzer()
         self.csv_path = csv_path or self.CSV_PATH
+        self.diagnostics: list[dict[str, Any]] = []
 
     def find_and_save_top_tokens(self) -> pd.DataFrame:
         """Run the full multi-chain discovery pipeline and save the candidate CSV."""
         ensure_project_directories()
+        self.diagnostics = []
 
         all_pairs: list[dict[str, Any]] = []
         for chain in SUPPORTED_CHAINS:
             addresses = self.client.get_top_boosted_token_addresses(chain)
             if not addresses:
                 self.logger.warning("DexScreener returned no %s hot token candidates", chain)
+                self.diagnostics.append({
+                    "code": "DEXSCREENER_NO_HOT_CANDIDATES",
+                    "message": f"DexScreener returned no {chain} hot token candidates",
+                    "source": "alpha_token_service",
+                    "fatal": False,
+                })
             else:
                 all_pairs.extend(self.client.get_token_pairs(chain, addresses))
 
@@ -83,6 +91,12 @@ class AlphaTokenService:
 
         if not all_pairs:
             self.logger.warning("DexScreener returned no multi-chain hot token candidates")
+            self.diagnostics.append({
+                "code": "DEXSCREENER_MULTI_CHAIN_FALLBACK_EMPTY",
+                "message": "DexScreener returned no multi-chain hot token candidates",
+                "source": "alpha_token_service",
+                "fatal": False,
+            })
             return self._save_empty_csv()
 
         tokens = self._pairs_to_dataframe(all_pairs)
