@@ -33,6 +33,7 @@ from src.services.token_age_service import TokenAgeService
 from src.services.trend_service import TrendService
 from src.storage.sqlite_store import SQLiteStore
 from src.utils.logging_config import setup_logging
+from src.utils.paths import DATA_DIR
 
 
 RUN_INTERVAL_SECONDS = 10 * 60
@@ -86,7 +87,7 @@ def _write_execution_summary(
     *, scan_run_id: int, output_references: list[str], warnings: list[dict[str, object]],
     fallbacks: list[dict[str, object]], delivery_results: list[dict[str, object]],
 ) -> dict[str, object]:
-    summary_path = Path("data/aios_execution_summary.json").resolve()
+    summary_path = DATA_DIR / "aios_execution_summary.json"
     summary = {
         "implementation_status": "completed",
         "scan_run_id": scan_run_id,

@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
-LOGS_DIR = PROJECT_ROOT / "logs"
-MEMORY_DIR = PROJECT_ROOT / "memory"
-CONTENT_DIR = PROJECT_ROOT / "content"
-LABS_DIR = PROJECT_ROOT / "labs"
+WORKSPACE_ENV = "ALPHA_HUNTER_WORKSPACE"
+
+
+def resolve_workspace_root(value: str | Path | None = None) -> Path:
+    """Resolve one process-wide mutable workspace without changing defaults."""
+    configured = value if value is not None else os.getenv(WORKSPACE_ENV)
+    if configured is None or not str(configured).strip():
+        return PROJECT_ROOT
+    return Path(str(configured)).expanduser().resolve()
+
+
+WORKSPACE_ROOT = resolve_workspace_root()
+DATA_DIR = WORKSPACE_ROOT / "data"
+LOGS_DIR = WORKSPACE_ROOT / "logs"
+MEMORY_DIR = WORKSPACE_ROOT / "memory"
+CONTENT_DIR = WORKSPACE_ROOT / "content"
+LABS_DIR = WORKSPACE_ROOT / "labs"
+REPORTS_DIR = WORKSPACE_ROOT / "reports"
 
 
 def ensure_project_directories() -> None:
@@ -27,3 +41,4 @@ def ensure_project_directories() -> None:
     (CONTENT_DIR / "threads").mkdir(parents=True, exist_ok=True)
     (CONTENT_DIR / "x").mkdir(parents=True, exist_ok=True)
     LABS_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)

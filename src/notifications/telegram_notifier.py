@@ -19,6 +19,7 @@ from config import (
     TELEGRAM_HEALTHCHECK_ENABLED,
     TELEGRAM_HEALTHCHECK_INTERVAL_HOURS,
 )
+from src.utils.paths import DATA_DIR
 
 
 class TelegramNotifier:
@@ -28,7 +29,7 @@ class TelegramNotifier:
     REQUEST_TIMEOUT_SECONDS = 15
     MAX_MESSAGE_LENGTH = 3900
     MAX_ALERT_TOKENS = 5
-    HEALTHCHECK_STATE_PATH = Path("data/telegram_healthcheck_state.json")
+    HEALTHCHECK_STATE_PATH = DATA_DIR / "telegram_healthcheck_state.json"
 
     def __init__(
         self,

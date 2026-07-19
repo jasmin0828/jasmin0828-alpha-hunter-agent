@@ -15,10 +15,10 @@ from zoneinfo import ZoneInfo
 
 from config import REPORT_TIMEZONE
 from src.storage.sqlite_store import DB_PATH
-from src.utils.paths import PROJECT_ROOT
+from src.utils.paths import REPORTS_DIR
 
 
-REPORT_PATH = PROJECT_ROOT / "reports" / "daily_scan_report.md"
+REPORT_PATH = REPORTS_DIR / "daily_scan_report.md"
 MISSING = "暂无数据"
 SYSTEM_VERSION = "v1.1 Observation Phase"
 FORBIDDEN_REPORT_TERMS = ("买入", "卖出", "建议建仓", "预测上涨", "目标价")
