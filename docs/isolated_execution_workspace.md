@@ -22,6 +22,7 @@ Missing isolated files do not fall back to production mutable state.
 | AlphaTokenService | `data/alpha_tokens.csv` | `data/alpha_tokens.csv` | read/write fallback/output |
 | MarketSystemManifestService | `data/market_system_manifest.json` | `data/market_system_manifest.json` | write |
 | Execution summary | `data/aios_execution_summary.json` | `data/aios_execution_summary.json` | write |
+| Network request evidence | `data/network_requests.jsonl` | `data/network_requests.jsonl` | append in enforced mode |
 | Telegram health state | `data/telegram_healthcheck_state.json` | `data/telegram_healthcheck_state.json` | conditional read/write |
 | Report notification state | `data/telegram_report_state.json` | `data/telegram_report_state.json` | conditional read/write |
 | Daily brief | `memory/daily/` | `memory/daily/` | write |
@@ -55,8 +56,10 @@ TELEGRAM_REPORTS_ENABLED=false
 This disables message, health-check, and scheduled-report delivery while
 retaining structured disabled delivery evidence.
 
-DexScreener retains its existing request-level retry: at most three attempts
-for one HTTP request with a three-second delay. Workspace support adds no
+An isolated invocation also requires `ALPHA_HUNTER_NETWORK_POLICY` and
+`ALPHA_HUNTER_RUN_CORRELATION_ID`. The exact endpoint rules, redirect
+revalidation, request-only retry, and process-correlated JSONL evidence are
+defined in `docs/daily_scan_network_contract.md`. Workspace support adds no
 capability, Run, scheduler, process, or PM2 retry.
 
 The AIOS Alpha Hunter adapter supplies and validates the workspace for Dogfood

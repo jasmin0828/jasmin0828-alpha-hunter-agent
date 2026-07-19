@@ -1,0 +1,32 @@
+{
+  "version": "alpha_hunter_network_policy.v1",
+  "capability": "alpha_hunter.daily_scan@1.0.0",
+  "allowed_origins": [
+    "https://api.dexscreener.com"
+  ],
+  "allowed_requests": [
+    {
+      "endpoint_id": "dexscreener.search_pairs",
+      "method": "GET",
+      "path_pattern": "/latest/dex/search",
+      "allowed_query_parameters": ["q"],
+      "required_query_parameters": ["q"]
+    },
+    {
+      "endpoint_id": "dexscreener.top_boosts",
+      "method": "GET",
+      "path_pattern": "/token-boosts/top/v1",
+      "allowed_query_parameters": []
+    },
+    {
+      "endpoint_id": "dexscreener.token_batch",
+      "method": "GET",
+      "path_pattern": "/tokens/v1/{chain}/{addresses}",
+      "allowed_query_parameters": [],
+      "constraints": {
+        "chains": ["ethereum", "solana", "bsc"],
+        "maximum_addresses": 30
+      }
+    }
+  ]
+}

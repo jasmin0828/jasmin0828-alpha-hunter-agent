@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin, urlsplit
 
 import requests
+
+from src.api.network_policy import NetworkPolicyError, resolve_network_policy, write_request_evidence
 
 
 class DexScreenerClient:
@@ -18,11 +20,13 @@ class DexScreenerClient:
     TOKEN_BATCH_SIZE = 30
     MAX_RETRIES = 3
     RETRY_DELAY_SECONDS = 3
+    MAX_REDIRECTS = 5
 
     def __init__(self) -> None:
         self.logger = logging.getLogger(__name__)
         self.session = requests.Session()
         self.session.headers.update({"Accept": "application/json"})
+        self.network_policy = resolve_network_policy()
 
     def get_top_boosted_token_addresses(self, chain: str) -> list[str]:
         """Return unique token addresses for one chain from DexScreener top boosts."""
@@ -120,9 +124,11 @@ class DexScreenerClient:
 
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
-                response = self.session.get(url, timeout=self.REQUEST_TIMEOUT_SECONDS)
+                response = self._get_with_validated_redirects(url, attempt)
                 response.raise_for_status()
                 return response.json()
+            except NetworkPolicyError:
+                raise
             except ValueError as exc:
                 self.logger.exception("DexScreener returned invalid JSON: %s", url)
                 raise RuntimeError(f"DexScreener returned invalid JSON: {url}") from exc
@@ -147,6 +153,40 @@ class DexScreenerClient:
                 time.sleep(self.RETRY_DELAY_SECONDS)
 
         raise RuntimeError(f"DexScreener request failed: {url}")
+
+    def _get_with_validated_redirects(self, url: str, attempt: int) -> requests.Response:
+        current = url
+        visited: set[str] = set()
+        for redirect_index in range(self.MAX_REDIRECTS + 1):
+            try:
+                decision = self.network_policy.authorize("GET", current) if self.network_policy else None
+            except NetworkPolicyError:
+                parsed = urlsplit(current)
+                write_request_evidence({
+                    "method": "GET", "origin": f"{parsed.scheme}://{parsed.hostname or ''}",
+                    "path": parsed.path, "query_parameters": [],
+                    "policy_decision": "denied", "attempt": 0, "redirect_index": redirect_index,
+                    "policy_digest": self.network_policy.digest if self.network_policy else None,
+                })
+                raise
+            if decision:
+                write_request_evidence({
+                    "method": decision.method, "origin": decision.origin, "path": decision.path,
+                    "query_parameters": list(decision.query_parameters), "policy_decision": "allowed",
+                    "attempt": attempt, "redirect_index": redirect_index, "policy_digest": self.network_policy.digest,
+                })
+            response = self.session.get(current, timeout=self.REQUEST_TIMEOUT_SECONDS, allow_redirects=False)
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                raise NetworkPolicyError("redirect response is missing Location")
+            target = urljoin(current, location)
+            if target in visited or redirect_index >= self.MAX_REDIRECTS:
+                raise NetworkPolicyError("redirect loop or limit exceeded")
+            visited.add(current)
+            current = target
+        raise NetworkPolicyError("redirect limit exceeded")
 
     def _chunk_addresses(self, addresses: list[str]) -> list[list[str]]:
         """Split addresses into chunks accepted by DexScreener token lookup."""

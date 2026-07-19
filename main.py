@@ -17,6 +17,7 @@ from time import monotonic
 import pandas as pd
 
 from src.notifications.telegram_notifier import TelegramNotifier
+from src.api.network_policy import NetworkPolicyError, REQUEST_EVIDENCE_PATH
 from src.services.alpha_token_service import AlphaTokenService
 from src.services.content_draft_service import ContentDraftService
 from src.services.daily_brief_service import DailyBriefService
@@ -86,10 +87,11 @@ def _artifact_references(*values: object) -> list[str]:
 def _write_execution_summary(
     *, scan_run_id: int, output_references: list[str], warnings: list[dict[str, object]],
     fallbacks: list[dict[str, object]], delivery_results: list[dict[str, object]],
+    implementation_status: str = "completed",
 ) -> dict[str, object]:
     summary_path = DATA_DIR / "aios_execution_summary.json"
     summary = {
-        "implementation_status": "completed",
+        "implementation_status": implementation_status,
         "scan_run_id": scan_run_id,
         "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "output_references": output_references,
@@ -135,6 +137,8 @@ def run_agent() -> dict[str, object]:
     try:
         try:
             top_tokens = service.find_and_save_top_tokens()
+        except NetworkPolicyError:
+            raise
         except Exception as exc:
             message = f"DexScreener scan failed; fallback attempted: {exc}"
             scan_errors.append(message)
@@ -207,6 +211,18 @@ def run_agent() -> dict[str, object]:
             errors=scan_errors,
             duration_seconds=duration_seconds,
         )
+    except NetworkPolicyError:
+        store.finish_scan_run(
+            scan_run_id, "failed", saved_count, errors=["NETWORK_POLICY_DENIED"],
+            duration_seconds=round(monotonic() - run_started, 2),
+        )
+        return _write_execution_summary(
+            scan_run_id=scan_run_id,
+            output_references=_artifact_references(REQUEST_EVIDENCE_PATH),
+            warnings=[{"code": "NETWORK_POLICY_DENIED", "message": "outbound request denied by approved policy",
+                       "source": "main.run_agent", "fatal": True}],
+            fallbacks=[], delivery_results=[], implementation_status="failed",
+        )
     except Exception as exc:
         scan_errors.append(str(exc))
         store.finish_scan_run(
@@ -244,7 +260,7 @@ def run_agent() -> dict[str, object]:
             "health", lambda: notifier.notify_health_status(current_snapshots, manifest, "no tokens matched current filters")
         ))
         delivery_results.extend(notify_due_reports(notifier, report_notification_service))
-        outputs = _artifact_references(service.csv_path, manifest_service.manifest_path, brief_path, content_paths, memory_paths)
+        outputs = _artifact_references(service.csv_path, manifest_service.manifest_path, brief_path, content_paths, memory_paths, REQUEST_EVIDENCE_PATH)
         return _write_execution_summary(
             scan_run_id=scan_run_id, output_references=outputs, warnings=service.diagnostics,
             fallbacks=fallbacks, delivery_results=delivery_results,
@@ -354,7 +370,7 @@ def run_agent() -> dict[str, object]:
         alert_tokens = alert_tokens.join(event_context, on="id")
     delivery_results.append(notifier.capture_delivery("signals", lambda: notifier.notify_top_tokens(alert_tokens)))
     delivery_results.extend(notify_due_reports(notifier, report_notification_service))
-    outputs = _artifact_references(service.csv_path, manifest_service.manifest_path, brief_path, content_paths, memory_paths)
+    outputs = _artifact_references(service.csv_path, manifest_service.manifest_path, brief_path, content_paths, memory_paths, REQUEST_EVIDENCE_PATH)
     return _write_execution_summary(
         scan_run_id=scan_run_id, output_references=outputs, warnings=service.diagnostics,
         fallbacks=fallbacks, delivery_results=delivery_results,

@@ -30,8 +30,10 @@ class WorkspaceIsolationTests(unittest.TestCase):
         environment = os.environ.copy()
         if workspace is None:
             environment.pop("ALPHA_HUNTER_WORKSPACE", None)
+            environment.pop("ALPHA_HUNTER_NETWORK_POLICY", None)
         else:
             environment["ALPHA_HUNTER_WORKSPACE"] = str(workspace)
+            environment["ALPHA_HUNTER_NETWORK_POLICY"] = str(ROOT / "config/daily_scan_network_policy.json")
         environment.update({
             "TELEGRAM_ENABLED": "false",
             "TELEGRAM_HEALTHCHECK_ENABLED": "false",
