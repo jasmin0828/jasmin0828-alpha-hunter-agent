@@ -141,17 +141,54 @@ class NetworkPolicyTests(unittest.TestCase):
     def test_request_evidence_is_process_correlated_and_secret_free(self):
         with tempfile.TemporaryDirectory() as tmp, patch(
             "src.api.network_policy.REQUEST_EVIDENCE_PATH", Path(tmp) / "requests.jsonl"
-        ), patch.dict(os.environ, {CORRELATION_ENV: "run.test"}, clear=False):
+        ), patch("src.api.network_policy._utc_timestamp", return_value="2026-07-20T01:23:45.123456Z"), patch.dict(
+            os.environ, {CORRELATION_ENV: "run.test"}, clear=False
+        ):
             write_request_evidence({
                 "method": "GET", "origin": "https://api.dexscreener.com", "path": "/latest/dex/search",
                 "query_parameters": ["q"], "policy_decision": "allowed", "attempt": 1,
                 "policy_digest": self.policy.digest,
             })
             record = json.loads((Path(tmp) / "requests.jsonl").read_text())
-        self.assertEqual(record["correlation_id"], "run.test")
-        self.assertEqual(record["query_parameters"], ["q"])
+        self.assertEqual(record["timestamp"], "2026-07-20T01:23:45.123456Z")
+        self.assertEqual(record["run_correlation_id"], "run.test")
+        self.assertEqual(record["query_parameter_names"], ["q"])
         self.assertNotIn("response", record)
         self.assertNotIn("SOL", json.dumps(record))
+
+    def test_retry_redirect_and_denial_records_have_independent_utc_timestamps(self):
+        timestamps = [
+            "2026-07-20T01:23:45.100001Z", "2026-07-20T01:23:45.100002Z",
+            "2026-07-20T01:23:45.100003Z", "2026-07-20T01:23:45.100004Z",
+            "2026-07-20T01:23:45.100005Z",
+        ]
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "src.api.network_policy.REQUEST_EVIDENCE_PATH", Path(tmp) / "requests.jsonl"
+        ), patch("src.api.network_policy._utc_timestamp", side_effect=timestamps), patch.dict(
+            os.environ, {CORRELATION_ENV: "run.timestamp-test"}, clear=False
+        ), patch("time.sleep"):
+            retry = self.client([requests.Timeout("controlled"), FakeResponse({"pairs": []})])
+            self.assertEqual(retry._get_json("/latest/dex/search?q=SOL"), {"pairs": []})
+            redirect = self.client([FakeResponse(status=302, location="/token-boosts/top/v1"), FakeResponse([])])
+            self.assertEqual(redirect._get_json("/latest/dex/search?q=SOL"), [])
+            denied = self.client([])
+            with self.assertRaises(NetworkPolicyError):
+                denied._get_json("/unapproved")
+            lines = (Path(tmp) / "requests.jsonl").read_text().splitlines()
+        records = [json.loads(line) for line in lines]
+        self.assertEqual(len(records), 5)
+        self.assertEqual([record["timestamp"] for record in records], timestamps)
+        self.assertEqual([record["attempt"] for record in records[:2]], [1, 2])
+        self.assertEqual([record["redirect_index"] for record in records[2:4]], [0, 1])
+        self.assertEqual(records[-1]["policy_decision"], "denied")
+        self.assertEqual(records[-1]["attempt"], 0)
+        self.assertEqual(denied.session.calls, [])
+        for record in records:
+            self.assertEqual(record["run_correlation_id"], "run.timestamp-test")
+            self.assertTrue(record["timestamp"].endswith("Z"))
+            self.assertNotIn("headers", record)
+            self.assertNotIn("response", record)
+            self.assertNotIn("SOL", json.dumps(record))
 
     def test_production_compatibility_and_isolated_missing_policy_fail_closed(self):
         with patch.dict(os.environ, {}, clear=True):

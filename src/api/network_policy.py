@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -20,6 +22,7 @@ REQUEST_EVIDENCE_PATH = DATA_DIR / "network_requests.jsonl"
 SUPPORTED_CHAINS = {"ethereum", "solana", "bsc"}
 EVM_ADDRESS = re.compile(r"0x[a-fA-F0-9]{40}")
 SOLANA_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
+_EVIDENCE_WRITE_LOCK = threading.Lock()
 
 
 class NetworkPolicyError(RuntimeError):
@@ -149,19 +152,27 @@ def resolve_network_policy() -> NetworkPolicy | None:
     return NetworkPolicy.from_path(Path(configured_policy).expanduser().resolve())
 
 
+def _utc_timestamp() -> str:
+    """Return the evidence emission time as microsecond UTC RFC 3339."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 def write_request_evidence(record: dict[str, Any]) -> None:
     """Append a secret-free process-correlated request decision record."""
     REQUEST_EVIDENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
     safe = {
-        "correlation_id": os.getenv(CORRELATION_ENV, "production-unattributed"),
+        "timestamp": _utc_timestamp(),
+        "run_correlation_id": os.getenv(CORRELATION_ENV, "production-unattributed"),
         "method": record["method"],
         "origin": record["origin"],
         "path": record["path"],
-        "query_parameters": record.get("query_parameters", []),
+        "query_parameter_names": record.get("query_parameters", []),
         "policy_decision": record["policy_decision"],
         "attempt": record["attempt"],
         "redirect_index": record.get("redirect_index", 0),
         "policy_digest": record.get("policy_digest"),
     }
-    with REQUEST_EVIDENCE_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(safe, sort_keys=True) + "\n")
+    line = json.dumps(safe, sort_keys=True) + "\n"
+    with _EVIDENCE_WRITE_LOCK:
+        with REQUEST_EVIDENCE_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(line)

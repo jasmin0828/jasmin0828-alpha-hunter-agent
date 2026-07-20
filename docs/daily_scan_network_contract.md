@@ -27,11 +27,19 @@ with a maximum of five hops and loop rejection. A policy rejection is terminal
 and is never retried. Existing retry semantics remain request-local: up to
 three attempts, separated by three seconds, only after authorization succeeds.
 
-Each decision is appended as JSONL to `data/network_requests.jsonl` in the
-selected workspace. Records contain the Run correlation ID, method, normalized
-origin and path, query-parameter names (never values), decision, attempt,
-redirect index, and policy SHA-256. Request bodies, headers, credentials,
-tokens, and raw query values are excluded.
+Each decision is appended as one independent JSON line to
+`data/network_requests.jsonl` in the selected workspace. Records contain a
+microsecond UTC RFC 3339 `timestamp` with a `Z` suffix, Run correlation ID,
+method, normalized origin and path, query-parameter names (never values),
+decision, attempt, redirect index, and policy SHA-256. Request bodies, headers,
+credentials, cookies, tokens, and raw query values are excluded.
+
+The timestamp is generated at evidence emission: immediately before an allowed
+attempt is transmitted, when a policy denial is recorded, and separately for
+every retry and evaluated redirect target. The single foreground process
+appends records in emission order without sorting or rewriting them. A
+process-local lock keeps each JSON line intact; file order, attempt, and
+redirect index remain the tie-breakers if two timestamps share clock resolution.
 
 This contract adds no scheduler, queue, process retry, PM2 retry, Sandbox, or
 new network destination.
