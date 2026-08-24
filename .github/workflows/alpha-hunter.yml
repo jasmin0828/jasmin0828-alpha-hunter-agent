@@ -22,114 +22,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Compile Python modules
-        run: python -m compileall main.py src dashboard
+        run: python -m compileall main.py src dashboard validation
 
-      - name: Run one Market System scan
+      - name: Validate deterministic Market System contracts
         env:
           GITHUB_ACTIONS: "true"
           TELEGRAM_ENABLED: "false"
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
-
-      - name: Validate v1.2 architecture artifacts
-        run: |
-          python - <<'PY'
-          import json
-          import sqlite3
-          from pathlib import Path
-
-          manifest_path = Path("data/market_system_manifest.json")
-          csv_path = Path("data/alpha_tokens.csv")
-          db_path = Path("data/alpha_hunter.db")
-          log_path = Path("logs/app.log")
-
-          for path in [manifest_path, csv_path, db_path, log_path]:
-              if not path.exists() or path.stat().st_size == 0:
-                  raise SystemExit(f"Missing or empty artifact: {path}")
-
-          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-          expected_subsystems = [
-              "Market Intelligence",
-              "AI Workflow Engine",
-              "Memory Layer",
-              "Content Engine",
-              "Automation Layer",
-              "Future AI Trading Agent",
-          ]
-          if list(manifest.get("subsystems", {}).keys()) != expected_subsystems:
-              raise SystemExit(f"Unexpected subsystems: {manifest.get('subsystems')}")
-          if "layers" in manifest:
-              raise SystemExit("Manifest must use `subsystems`, not `layers`.")
-
-          safety = manifest.get("safety_boundary", {})
-          for key in ["wallet_connection", "private_keys", "transaction_signing", "automated_trading"]:
-              if safety.get(key) is not False:
-                  raise SystemExit(f"Safety boundary failed for {key}: {safety.get(key)}")
-
-          scan_summary = manifest.get("scan_summary", {})
-          if "token_count" not in scan_summary or "alert_distribution" not in scan_summary:
-              raise SystemExit(f"Manifest scan_summary is incomplete: {scan_summary}")
-
-          csv_header = csv_path.read_text(encoding="utf-8").splitlines()[0].split(",")
-          for column in ["chain", "token_symbol", "contract_address", "pair_url"]:
-              if column not in csv_header:
-                  raise SystemExit(f"Missing CSV column: {column}")
-
-          with sqlite3.connect(db_path) as conn:
-              tables = {
-                  row[0]
-                  for row in conn.execute(
-                      "SELECT name FROM sqlite_master WHERE type='table'"
-                  )
-              }
-              required_tables = {"scan_runs", "token_snapshots", "signal_events"}
-              missing_tables = required_tables - tables
-              if missing_tables:
-                  raise SystemExit(f"Missing SQLite tables: {sorted(missing_tables)}")
-
-              snapshot_columns = {
-                  row[1] for row in conn.execute("PRAGMA table_info(token_snapshots)")
-              }
-              required_snapshot_columns = {
-                  "chain",
-                  "token_symbol",
-                  "contract_address",
-                  "pair_url",
-                  "first_seen_at",
-                  "is_first_seen",
-                  "scan_count",
-                  "consecutive_up_count",
-                  "early_alpha_score",
-                  "early_alpha_reason",
-              }
-              missing_columns = required_snapshot_columns - snapshot_columns
-              if missing_columns:
-                  raise SystemExit(f"Missing token_snapshots columns: {sorted(missing_columns)}")
-
-              event_columns = {
-                  row[1] for row in conn.execute("PRAGMA table_info(signal_events)")
-              }
-              required_event_columns = {
-                  "event_type",
-                  "early_alpha_score",
-                  "outcome_status",
-                  "outcome_30m_price_change",
-                  "outcome_1h_price_change",
-                  "outcome_4h_price_change",
-              }
-              missing_event_columns = required_event_columns - event_columns
-              if missing_event_columns:
-                  raise SystemExit(f"Missing signal_events columns: {sorted(missing_event_columns)}")
-
-          log_text = log_path.read_text(encoding="utf-8", errors="ignore")
-          for marker in [
-              "Starting Alpha Hunter Market System v1.2",
-              "Alpha Hunter Market System Manifest",
-              "Signal Quality Summary",
-              "Early Alpha Summary",
-              "First Seen Tokens",
-          ]:
-              if marker not in log_text:
-                  raise SystemExit(f"Missing log marker: {marker}")
-          PY
+          TELEGRAM_HEALTHCHECK_ENABLED: "false"
+          TELEGRAM_REPORTS_ENABLED: "false"
+        run: python -m validation.run_market_system_validation

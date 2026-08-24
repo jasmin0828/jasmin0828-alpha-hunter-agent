@@ -1,0 +1,23 @@
+[
+  {
+    "chain": "ethereum",
+    "symbol": "ALPHA",
+    "token_symbol": "ALPHA",
+    "token_name": "Deterministic Alpha Fixture",
+    "token_address": "0x0000000000000000000000000000000000000001",
+    "contract_address": "0x0000000000000000000000000000000000000001",
+    "price_usd": 1.25,
+    "liquidity_usd": 250000.0,
+    "volume_24h": 1000000.0,
+    "price_change_24h": 12.5,
+    "fdv": 10000000.0,
+    "market_cap": 5000000.0,
+    "pair_created_at": 1780000000000.0,
+    "alpha_score": 82.0,
+    "risk_score": 20.0,
+    "ai_summary": "Deterministic validation fixture",
+    "dex": "uniswap",
+    "url": "https://dexscreener.com/ethereum/fixture-alpha",
+    "pair_url": "https://dexscreener.com/ethereum/fixture-alpha"
+  }
+]
